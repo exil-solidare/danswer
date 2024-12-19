@@ -52,6 +52,40 @@ class NotionPage:
                 setattr(self, k, v)
 
 
+HARCODED_TAG_FIELD_TYPES = set(["multi_select", "select"])
+
+
+def get_tags(page: NotionPage) -> dict[str, list[str] | str]:
+    tags_by_name: dict[str, list[str] | str] = {}
+    for property_name, property_dict in page.properties.items():
+        property_type = property_dict.get("type", None)
+        if not property_type:
+            continue
+        if property_type in HARCODED_TAG_FIELD_TYPES:
+            collected_tags: list[str] = []
+            property_tags: (
+                list[dict[str, str]] | dict[str, dict[str, str]] | dict[str, str]
+            ) = property_dict[property_type]
+            if isinstance(property_tags, dict):
+                collected_tags.append(str(property_tags.get("name", "UnkName")))
+            elif isinstance(property_tags, list):
+                for tag_info in property_tags:
+                    if isinstance(tag_info, dict):
+                        collected_tags.append(tag_info.get("name", "UnkName"))
+                    else:
+                        logger.warning(
+                            f"Unexpected tag dict: {tag_info}, converting to string"
+                        )
+                        collected_tags.append(str(tag_info))
+            else:
+                logger.warning(f"{property_tags} is not a dict or list")
+                continue
+            print(f"Adding tags for {property_name}: {collected_tags}")
+            tags_by_name[property_name] = collected_tags
+
+    return tags_by_name if tags_by_name else {}
+
+
 @dataclass
 class NotionBlock:
     """Represents a Notion Block object"""
@@ -464,6 +498,10 @@ class NotionConnector(LoadConnector, PollConnector):
             page_title = (
                 self._read_page_title(page) or f"Untitled Page with ID {page.id}"
             )
+            metadata = get_tags(page)
+            # hack that makes sure if you have URL property with exactly this name it will be used as the link
+            if "URL" in page.properties:
+                page.url = page.properties["URL"].get("url", page.url)
 
             yield (
                 Document(
@@ -480,7 +518,7 @@ class NotionConnector(LoadConnector, PollConnector):
                     doc_updated_at=datetime.fromisoformat(
                         page.last_edited_time
                     ).astimezone(timezone.utc),
-                    metadata={},
+                    metadata=metadata,
                 )
             )
             self.indexed_pages.add(page.id)
