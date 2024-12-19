@@ -1,30 +1,16 @@
 import { PersonasTable } from "./PersonaTable";
 import { FiPlusSquare } from "react-icons/fi";
 import Link from "next/link";
-import { Divider, Text, Title } from "@tremor/react";
-import { fetchSS } from "@/lib/utilsSS";
-import { ErrorCallout } from "@/components/ErrorCallout";
-import { Persona } from "./interfaces";
-import { RobotIcon } from "@/components/icons/icons";
+import Text from "@/components/ui/text";
+import Title from "@/components/ui/title";
+import { Separator } from "@/components/ui/separator";
+import { AssistantsIcon } from "@/components/icons/icons";
 import { AdminPageTitle } from "@/components/admin/Title";
 
 export default async function Page() {
-  const personaResponse = await fetchSS("/admin/persona");
-
-  if (!personaResponse.ok) {
-    return (
-      <ErrorCallout
-        errorTitle="Something went wrong :("
-        errorMsg={`Failed to fetch personas - ${await personaResponse.text()}`}
-      />
-    );
-  }
-
-  const personas = (await personaResponse.json()) as Persona[];
-
   return (
     <div className="mx-auto container">
-      <AdminPageTitle icon={<RobotIcon size={32} />} title="Assistants" />
+      <AdminPageTitle icon={<AssistantsIcon size={32} />} title="Assistants" />
 
       <Text className="mb-2">
         Assistants are a way to build custom search/question-answering
@@ -41,7 +27,7 @@ export default async function Page() {
       </div>
 
       <div>
-        <Divider />
+        <Separator />
 
         <Title>Create an Assistant</Title>
         <Link
@@ -54,10 +40,10 @@ export default async function Page() {
           </div>
         </Link>
 
-        <Divider />
+        <Separator />
 
         <Title>Existing Assistants</Title>
-        <PersonasTable personas={personas} />
+        <PersonasTable />
       </div>
     </div>
   );

@@ -1,20 +1,19 @@
 "use client";
 
 import {
-  Text,
   Table,
   TableHead,
   TableRow,
-  TableHeaderCell,
   TableBody,
   TableCell,
-} from "@tremor/react";
+} from "@/components/ui/table";
 import { ToolSnapshot } from "@/lib/tools/interfaces";
 import { useRouter } from "next/navigation";
 import { usePopup } from "@/components/admin/connectors/Popup";
-import { FiCheckCircle, FiEdit, FiXCircle } from "react-icons/fi";
+import { FiCheckCircle, FiEdit2, FiXCircle } from "react-icons/fi";
 import { TrashIcon } from "@/components/icons/icons";
 import { deleteCustomTool } from "@/lib/tools/edit";
+import { TableHeader } from "@/components/ui/table";
 
 export function ToolsTable({ tools }: { tools: ToolSnapshot[] }) {
   const router = useRouter();
@@ -28,21 +27,21 @@ export function ToolsTable({ tools }: { tools: ToolSnapshot[] }) {
       {popup}
 
       <Table>
-        <TableHead>
+        <TableHeader>
           <TableRow>
-            <TableHeaderCell>Name</TableHeaderCell>
-            <TableHeaderCell>Description</TableHeaderCell>
-            <TableHeaderCell>Built In?</TableHeaderCell>
-            <TableHeaderCell>Delete</TableHeaderCell>
+            <TableHead>Name</TableHead>
+            <TableHead>Description</TableHead>
+            <TableHead>Built In?</TableHead>
+            <TableHead>Delete</TableHead>
           </TableRow>
-        </TableHead>
+        </TableHeader>
         <TableBody>
           {sortedTools.map((tool) => (
             <TableRow key={tool.id.toString()}>
               <TableCell>
                 <div className="flex">
                   {tool.in_code_tool_id === null && (
-                    <FiEdit
+                    <FiEdit2
                       className="mr-1 my-auto cursor-pointer"
                       onClick={() =>
                         router.push(

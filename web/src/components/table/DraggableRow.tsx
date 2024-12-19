@@ -1,5 +1,5 @@
 import { useSortable } from "@dnd-kit/sortable";
-import { TableCell, TableRow } from "@tremor/react";
+import { TableCell, TableRow } from "@/components/ui/table";
 import { CSS } from "@dnd-kit/utilities";
 import { DragHandle } from "./DragHandle";
 import { Row } from "./interfaces";
@@ -7,9 +7,11 @@ import { Row } from "./interfaces";
 export function DraggableRow({
   row,
   forceDragging,
+  isAdmin = true,
 }: {
   row: Row;
   forceDragging?: boolean;
+  isAdmin?: boolean;
 }) {
   const {
     attributes,
@@ -33,11 +35,13 @@ export function DraggableRow({
       className={isDragging ? "invisible" : "bg-background"}
     >
       <TableCell>
-        <DragHandle
-          isDragging={isDragging || forceDragging}
-          {...attributes}
-          {...listeners}
-        />
+        {isAdmin && (
+          <DragHandle
+            isDragging={isDragging || forceDragging}
+            {...attributes}
+            {...listeners}
+          />
+        )}
       </TableCell>
       {row.cells.map((column, ind) => (
         <TableCell key={ind}>{column}</TableCell>

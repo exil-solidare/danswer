@@ -1,52 +1,73 @@
 "use client";
 
-import { Text } from "@tremor/react";
+import Text from "@/components/ui/text";
 import { Persona } from "./interfaces";
 import { useRouter } from "next/navigation";
 import { CustomCheckbox } from "@/components/CustomCheckbox";
 import { usePopup } from "@/components/admin/connectors/Popup";
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { UniqueIdentifier } from "@dnd-kit/core";
 import { DraggableTable } from "@/components/table/DraggableTable";
-import { deletePersona, personaComparator } from "./lib";
-import { FiEdit } from "react-icons/fi";
+import {
+  deletePersona,
+  personaComparator,
+  togglePersonaVisibility,
+} from "./lib";
+import { FiEdit2 } from "react-icons/fi";
 import { TrashIcon } from "@/components/icons/icons";
+import { useUser } from "@/components/user/UserProvider";
+import { useAssistants } from "@/components/context/AssistantsContext";
 
 function PersonaTypeDisplay({ persona }: { persona: Persona }) {
-  if (persona.default_persona) {
+  if (persona.builtin_persona) {
     return <Text>Built-In</Text>;
   }
 
+  if (persona.is_default_persona) {
+    return <Text>Default</Text>;
+  }
+
   if (persona.is_public) {
-    return <Text>Global</Text>;
+    return <Text>Public</Text>;
+  }
+
+  if (persona.groups.length > 0 || persona.users.length > 0) {
+    return <Text>Shared</Text>;
   }
 
   return <Text>Personal {persona.owner && <>({persona.owner.email})</>}</Text>;
 }
 
-export function PersonasTable({ personas }: { personas: Persona[] }) {
+export function PersonasTable() {
   const router = useRouter();
   const { popup, setPopup } = usePopup();
+  const { refreshUser, isAdmin } = useUser();
+  const {
+    allAssistants: assistants,
+    refreshAssistants,
+    editablePersonas,
+  } = useAssistants();
 
-  const availablePersonaIds = new Set(
-    personas.map((persona) => persona.id.toString())
-  );
-  const sortedPersonas = [...personas];
-  sortedPersonas.sort(personaComparator);
+  const editablePersonaIds = useMemo(() => {
+    return new Set(editablePersonas.map((p) => p.id.toString()));
+  }, [editablePersonas]);
 
-  const [finalPersonas, setFinalPersonas] = useState<string[]>(
-    sortedPersonas.map((persona) => persona.id.toString())
-  );
-  const finalPersonaValues = finalPersonas
-    .filter((id) => availablePersonaIds.has(id))
-    .map((id) => {
-      return sortedPersonas.find(
-        (persona) => persona.id.toString() === id
-      ) as Persona;
-    });
+  const [finalPersonas, setFinalPersonas] = useState<Persona[]>([]);
+
+  useEffect(() => {
+    const editable = editablePersonas.sort(personaComparator);
+    const nonEditable = assistants
+      .filter((p) => !editablePersonaIds.has(p.id.toString()))
+      .sort(personaComparator);
+    setFinalPersonas([...editable, ...nonEditable]);
+  }, [editablePersonas, assistants, editablePersonaIds]);
 
   const updatePersonaOrder = async (orderedPersonaIds: UniqueIdentifier[]) => {
-    setFinalPersonas(orderedPersonaIds.map((id) => id.toString()));
+    const reorderedAssistants = orderedPersonaIds.map(
+      (id) => assistants.find((assistant) => assistant.id.toString() === id)!
+    );
+
+    setFinalPersonas(reorderedAssistants);
 
     const displayPriorityMap = new Map<UniqueIdentifier, number>();
     orderedPersonaIds.forEach((personaId, ind) => {
@@ -62,13 +83,19 @@ export function PersonasTable({ personas }: { personas: Persona[] }) {
         display_priority_map: Object.fromEntries(displayPriorityMap),
       }),
     });
+
     if (!response.ok) {
       setPopup({
         type: "error",
         message: `Failed to update persona order - ${await response.text()}`,
       });
-      router.refresh();
+      setFinalPersonas(assistants);
+      await refreshAssistants();
+      return;
     }
+
+    await refreshAssistants();
+    await refreshUser();
   };
 
   return (
@@ -78,18 +105,20 @@ export function PersonasTable({ personas }: { personas: Persona[] }) {
       <Text className="my-2">
         Assistants will be displayed as options on the Chat / Search interfaces
         in the order they are displayed below. Assistants marked as hidden will
-        not be displayed.
+        not be displayed. Editable assistants are shown at the top.
       </Text>
 
       <DraggableTable
         headers={["Name", "Description", "Type", "Is Visible", "Delete"]}
-        rows={finalPersonaValues.map((persona) => {
+        isAdmin={isAdmin}
+        rows={finalPersonas.map((persona) => {
+          const isEditable = editablePersonas.includes(persona);
           return {
             id: persona.id.toString(),
             cells: [
               <div key="name" className="flex">
-                {!persona.default_persona && (
-                  <FiEdit
+                {!persona.builtin_persona && (
+                  <FiEdit2
                     className="mr-1 my-auto cursor-pointer"
                     onClick={() =>
                       router.push(
@@ -112,28 +141,24 @@ export function PersonasTable({ personas }: { personas: Persona[] }) {
               <div
                 key="is_visible"
                 onClick={async () => {
-                  const response = await fetch(
-                    `/api/admin/persona/${persona.id}/visible`,
-                    {
-                      method: "PATCH",
-                      headers: {
-                        "Content-Type": "application/json",
-                      },
-                      body: JSON.stringify({
-                        is_visible: !persona.is_visible,
-                      }),
+                  if (isEditable) {
+                    const response = await togglePersonaVisibility(
+                      persona.id,
+                      persona.is_visible
+                    );
+                    if (response.ok) {
+                      await refreshAssistants();
+                    } else {
+                      setPopup({
+                        type: "error",
+                        message: `Failed to update persona - ${await response.text()}`,
+                      });
                     }
-                  );
-                  if (response.ok) {
-                    router.refresh();
-                  } else {
-                    setPopup({
-                      type: "error",
-                      message: `Failed to update persona - ${await response.text()}`,
-                    });
                   }
                 }}
-                className="px-1 py-0.5 hover:bg-hover-light rounded flex cursor-pointer select-none w-fit"
+                className={`px-1 py-0.5 rounded flex ${
+                  isEditable ? "hover:bg-hover cursor-pointer" : ""
+                } select-none w-fit`}
               >
                 <div className="my-auto w-12">
                   {!persona.is_visible ? (
@@ -147,14 +172,14 @@ export function PersonasTable({ personas }: { personas: Persona[] }) {
                 </div>
               </div>,
               <div key="edit" className="flex">
-                <div className="mx-auto my-auto">
-                  {!persona.default_persona ? (
+                <div className="mr-auto my-auto">
+                  {!persona.builtin_persona && isEditable ? (
                     <div
                       className="hover:bg-hover rounded p-1 cursor-pointer"
                       onClick={async () => {
                         const response = await deletePersona(persona.id);
                         if (response.ok) {
-                          router.refresh();
+                          await refreshAssistants();
                         } else {
                           alert(
                             `Failed to delete persona - ${await response.text()}`
@@ -170,7 +195,7 @@ export function PersonasTable({ personas }: { personas: Persona[] }) {
                 </div>
               </div>,
             ],
-            staticModifiers: [[1, "lg:w-[300px] xl:w-[400px] 2xl:w-[550px]"]],
+            staticModifiers: [[1, "lg:w-[250px] xl:w-[400px] 2xl:w-[550px]"]],
           };
         })}
         setRows={updatePersonaOrder}

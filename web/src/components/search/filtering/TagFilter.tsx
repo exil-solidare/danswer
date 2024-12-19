@@ -2,18 +2,25 @@ import { containsObject, objectsAreEquivalent } from "@/lib/contains";
 import { Tag } from "@/lib/types";
 import { useEffect, useRef, useState } from "react";
 import { FiTag, FiX } from "react-icons/fi";
+import debounce from "lodash/debounce";
+import { getValidTags } from "@/lib/tags/tagUtils";
 
 export function TagFilter({
+  modal,
   tags,
   selectedTags,
   setSelectedTags,
+  showTagsOnLeft = false,
 }: {
+  modal?: boolean;
   tags: Tag[];
   selectedTags: Tag[];
   setSelectedTags: React.Dispatch<React.SetStateAction<Tag[]>>;
+  showTagsOnLeft?: boolean;
 }) {
   const [filterValue, setFilterValue] = useState("");
   const [tagOptionsAreVisible, setTagOptionsAreVisible] = useState(false);
+  const [filteredTags, setFilteredTags] = useState<Tag[]>(tags);
   const inputRef = useRef<HTMLInputElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
 
@@ -45,23 +52,39 @@ export function TagFilter({
     };
   }, []);
 
-  const filterValueLower = filterValue.toLowerCase();
-  const filteredTags = filterValueLower
-    ? tags.filter(
-        (tags) =>
-          tags.tag_value.toLowerCase().startsWith(filterValueLower) ||
-          tags.tag_key.toLowerCase().startsWith(filterValueLower)
-      )
-    : tags;
+  const debouncedFetchTags = useRef(
+    debounce(async (value: string) => {
+      if (value) {
+        const fetchedTags = await getValidTags(value);
+        setFilteredTags(fetchedTags);
+      } else {
+        setFilteredTags(tags);
+      }
+    }, 50)
+  ).current;
+
+  useEffect(() => {
+    debouncedFetchTags(filterValue);
+
+    return () => {
+      debouncedFetchTags.cancel();
+    };
+  }, [filterValue, tags, debouncedFetchTags]);
+
+  const handleFilterChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setFilterValue(event.target.value);
+  };
 
   return (
-    <div className="relative">
+    <div className="relative w-full ">
       <input
         ref={inputRef}
-        className="w-full border border-border py-0.5 px-2 rounded text-sm h-8"
+        className={` border border-border py-0.5 px-2 rounded text-sm h-8 ${
+          modal ? "w-[80vw]" : "w-full"
+        }`}
         placeholder="Find a tag"
         value={filterValue}
-        onChange={(event) => setFilterValue(event.target.value)}
+        onChange={handleFilterChange}
         onFocus={() => setTagOptionsAreVisible(true)}
       />
       {selectedTags.length > 0 && (
@@ -71,7 +94,22 @@ export function TagFilter({
               <div
                 key={tag.tag_key + tag.tag_value}
                 onClick={() => onSelectTag(tag)}
-                className="max-w-full break-all line-clamp-1 text-ellipsis flex text-sm border border-border py-0.5 px-2 rounded cursor-pointer bg-background hover:bg-hover"
+                className={`
+                max-w-full 
+                break-all 
+                line-clamp-1 
+                text-ellipsis 
+                flex 
+                text-sm 
+                border 
+                border-border 
+                py-0.5 
+                px-2 
+                rounded 
+                cursor-pointer 
+                bg-background-search-filter 
+                hover:bg-background-search-filter-dropdown
+                `}
               >
                 {tag.tag_key}
                 <b>=</b>
@@ -89,16 +127,22 @@ export function TagFilter({
         </div>
       )}
       {tagOptionsAreVisible && (
-        <div className="absolute top-0 right-0 transform translate-x-[105%] z-40">
+        <div
+          className={` absolute  z-[100] ${
+            showTagsOnLeft
+              ? "left-0   top-0 translate-y-[2rem]"
+              : "right-0 translate-x-[105%] top-0"
+          } z-40`}
+        >
           <div
             ref={popupRef}
-            className="p-2 border border-border rounded shadow-lg w-72 bg-background"
+            className="p-2 border border-border rounded shadow-lg w-72 bg-background-search-filter"
           >
             <div className="flex border-b border-border font-medium pb-1 text-xs mb-2">
               <FiTag className="mr-1 my-auto" />
               Tags
             </div>
-            <div className="flex flex-wrap gap-x-1 gap-y-1">
+            <div className="flex overflow-y-scroll overflow-x-hidden input-scrollbar max-h-96 flex-wrap gap-x-1 gap-y-1">
               {filteredTags.length > 0 ? (
                 filteredTags.map((tag) => (
                   <div
@@ -115,7 +159,11 @@ export function TagFilter({
                     cursor-pointer 
                     bg-background 
                     hover:bg-hover
-                    ${selectedTags.includes(tag) ? "bg-hover" : ""}
+                    ${
+                      selectedTags.includes(tag)
+                        ? "bg-background-search-filter-dropdown"
+                        : ""
+                    }
                   `}
                   >
                     {tag.tag_key}

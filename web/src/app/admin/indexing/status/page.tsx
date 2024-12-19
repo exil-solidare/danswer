@@ -1,35 +1,42 @@
 "use client";
 
-import useSWR from "swr";
-
 import { LoadingAnimation } from "@/components/Loading";
 import { NotebookIcon } from "@/components/icons/icons";
-import { errorHandlingFetcher } from "@/lib/fetcher";
-import { ConnectorIndexingStatus } from "@/lib/types";
 import { CCPairIndexingStatusTable } from "./CCPairIndexingStatusTable";
 import { AdminPageTitle } from "@/components/admin/Title";
 import Link from "next/link";
-import { Button, Text } from "@tremor/react";
+import Text from "@/components/ui/text";
+import { useConnectorCredentialIndexingStatus } from "@/lib/hooks";
+import { usePopupFromQuery } from "@/components/popup/PopupFromQuery";
+import { Button } from "@/components/ui/button";
 
 function Main() {
   const {
     data: indexAttemptData,
     isLoading: indexAttemptIsLoading,
     error: indexAttemptError,
-  } = useSWR<ConnectorIndexingStatus<any, any>[]>(
-    "/api/manage/admin/connector/indexing-status",
-    errorHandlingFetcher,
-    { refreshInterval: 10000 } // 10 seconds
-  );
+  } = useConnectorCredentialIndexingStatus();
+  const {
+    data: editableIndexAttemptData,
+    isLoading: editableIndexAttemptIsLoading,
+    error: editableIndexAttemptError,
+  } = useConnectorCredentialIndexingStatus(undefined, true);
 
-  if (indexAttemptIsLoading) {
+  if (indexAttemptIsLoading || editableIndexAttemptIsLoading) {
     return <LoadingAnimation text="" />;
   }
 
-  if (indexAttemptError || !indexAttemptData) {
+  if (
+    indexAttemptError ||
+    !indexAttemptData ||
+    editableIndexAttemptError ||
+    !editableIndexAttemptData
+  ) {
     return (
       <div className="text-error">
-        {indexAttemptError?.info?.detail || "Error loading indexing history."}
+        {indexAttemptError?.info?.detail ||
+          editableIndexAttemptError?.info?.detail ||
+          "Error loading indexing history."}
       </div>
     );
   }
@@ -58,24 +65,38 @@ function Main() {
   });
 
   return (
-    <CCPairIndexingStatusTable ccPairsIndexingStatuses={indexAttemptData} />
+    <CCPairIndexingStatusTable
+      ccPairsIndexingStatuses={indexAttemptData}
+      editableCcPairsIndexingStatuses={editableIndexAttemptData}
+    />
   );
 }
 
 export default function Status() {
+  const { popup } = usePopupFromQuery({
+    "connector-created": {
+      message: "Connector created successfully",
+      type: "success",
+    },
+    "connector-deleted": {
+      message: "Connector deleted successfully",
+      type: "success",
+    },
+  });
+
   return (
     <div className="mx-auto container">
+      {popup}
       <AdminPageTitle
         icon={<NotebookIcon size={32} />}
         title="Existing Connectors"
         farRightElement={
           <Link href="/admin/add-connector">
-            <Button color="green" size="xs">
-              Add Connector
-            </Button>
+            <Button variant="success-reverse">Add Connector</Button>
           </Link>
         }
       />
+
       <Main />
     </div>
   );

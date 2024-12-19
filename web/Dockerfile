@@ -1,42 +1,34 @@
 FROM node:20-alpine AS base
 
-LABEL com.danswer.maintainer="founders@danswer.ai"
-LABEL com.danswer.description="This image is for the frontend/webserver of Danswer. It is MIT \
-Licensed and free for all to use. You can find it at \
-https://hub.docker.com/r/danswer/danswer-web-server. For more details, visit \
-https://github.com/danswer-ai/danswer."
+LABEL com.onyx.maintainer="founders@onyx.app"
+LABEL com.onyx.description="This image is the web/frontend container of Onyx which \
+contains code for both the Community and Enterprise editions of Onyx. If you do not \
+have a contract or agreement with DanswerAI, you are not permitted to use the Enterprise \
+Edition features outside of personal development or testing purposes. Please reach out to \
+founders@onyx.app for more information. Please visit https://github.com/onyx-dot-app/onyx"
 
-# Default DANSWER_VERSION, typically overriden during builds by GitHub Actions.
-ARG DANSWER_VERSION=0.3-dev
-ENV DANSWER_VERSION=${DANSWER_VERSION}
-RUN echo "DANSWER_VERSION: ${DANSWER_VERSION}"
+# Default ONYX_VERSION, typically overriden during builds by GitHub Actions.
+ARG ONYX_VERSION=0.8-dev
+ENV ONYX_VERSION=${ONYX_VERSION}
+RUN echo "ONYX_VERSION: ${ONYX_VERSION}"
 
-# Step 1. Install dependencies only when needed
-FROM base AS deps
+# Step 1. Install dependencies + rebuild the source code only when needed
+FROM base AS builder
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# Install dependencies based on the preferred package manager
-COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* ./
-RUN \
-  if [ -f yarn.lock ]; then yarn --frozen-lockfile; \
-  elif [ -f package-lock.json ]; then npm ci; \
-  elif [ -f pnpm-lock.yaml ]; then yarn global add pnpm && pnpm i --frozen-lockfile; \
-  else echo "Lockfile not found." && exit 1; \
-  fi
-
-# Step 2. Rebuild the source code only when needed
-FROM base AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+# pull in source code / package.json / package-lock.json
 COPY . .
 
+# Install dependencies
+RUN npm ci
+
 # needed to get the `standalone` dir we expect later
-ENV NEXT_PRIVATE_STANDALONE true
+ENV NEXT_PRIVATE_STANDALONE=true
 
 # Disable automatic telemetry collection
-ENV NEXT_TELEMETRY_DISABLED 1
+ENV NEXT_TELEMETRY_DISABLED=1
 
 # Environment variables must be present at build time
 # https://github.com/vercel/next.js/discussions/14030
@@ -54,12 +46,38 @@ ENV NEXT_PUBLIC_POSITIVE_PREDEFINED_FEEDBACK_OPTIONS=${NEXT_PUBLIC_POSITIVE_PRED
 ARG NEXT_PUBLIC_NEGATIVE_PREDEFINED_FEEDBACK_OPTIONS
 ENV NEXT_PUBLIC_NEGATIVE_PREDEFINED_FEEDBACK_OPTIONS=${NEXT_PUBLIC_NEGATIVE_PREDEFINED_FEEDBACK_OPTIONS}
 
+ARG NEXT_PUBLIC_DEFAULT_SIDEBAR_OPEN
+ENV NEXT_PUBLIC_DEFAULT_SIDEBAR_OPEN=${NEXT_PUBLIC_DEFAULT_SIDEBAR_OPEN}
+
+ARG NEXT_PUBLIC_THEME
+ENV NEXT_PUBLIC_THEME=${NEXT_PUBLIC_THEME}
+
+ARG NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED
+ENV NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED=${NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED}
+
 ARG NEXT_PUBLIC_DISABLE_LOGOUT
 ENV NEXT_PUBLIC_DISABLE_LOGOUT=${NEXT_PUBLIC_DISABLE_LOGOUT}
 
-RUN npm run build
+ARG NEXT_PUBLIC_CUSTOM_REFRESH_URL
+ENV NEXT_PUBLIC_CUSTOM_REFRESH_URL=${NEXT_PUBLIC_CUSTOM_REFRESH_URL}
 
-# Step 3. Production image, copy all the files and run next
+ARG NEXT_PUBLIC_POSTHOG_KEY
+ARG NEXT_PUBLIC_POSTHOG_HOST
+ENV NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY}
+ENV NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
+
+ARG NEXT_PUBLIC_CLOUD_ENABLED
+ENV NEXT_PUBLIC_CLOUD_ENABLED=${NEXT_PUBLIC_CLOUD_ENABLED}
+
+ARG NEXT_PUBLIC_SENTRY_DSN
+ENV NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN} 
+
+ARG NEXT_PUBLIC_GTM_ENABLED
+ENV NEXT_PUBLIC_GTM_ENABLED=${NEXT_PUBLIC_GTM_ENABLED}
+
+RUN npx next build
+
+# Step 2. Production image, copy all the files and run next
 FROM base AS runner
 WORKDIR /app
 
@@ -72,7 +90,7 @@ RUN rm -rf /usr/local/lib/node_modules
 # ENV NODE_ENV production  
 
 # Disable automatic telemetry collection
-ENV NEXT_TELEMETRY_DISABLED 1
+ENV NEXT_TELEMETRY_DISABLED=1
 
 # Don't run production as root
 RUN addgroup --system --gid 1001 nodejs
@@ -102,8 +120,35 @@ ENV NEXT_PUBLIC_POSITIVE_PREDEFINED_FEEDBACK_OPTIONS=${NEXT_PUBLIC_POSITIVE_PRED
 ARG NEXT_PUBLIC_NEGATIVE_PREDEFINED_FEEDBACK_OPTIONS
 ENV NEXT_PUBLIC_NEGATIVE_PREDEFINED_FEEDBACK_OPTIONS=${NEXT_PUBLIC_NEGATIVE_PREDEFINED_FEEDBACK_OPTIONS}
 
+ARG NEXT_PUBLIC_THEME
+ENV NEXT_PUBLIC_THEME=${NEXT_PUBLIC_THEME}
+
+ARG NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED
+ENV NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED=${NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED}
+
+ARG NEXT_PUBLIC_DEFAULT_SIDEBAR_OPEN
+ENV NEXT_PUBLIC_DEFAULT_SIDEBAR_OPEN=${NEXT_PUBLIC_DEFAULT_SIDEBAR_OPEN}
+
 ARG NEXT_PUBLIC_DISABLE_LOGOUT
 ENV NEXT_PUBLIC_DISABLE_LOGOUT=${NEXT_PUBLIC_DISABLE_LOGOUT}
+
+ARG NEXT_PUBLIC_CUSTOM_REFRESH_URL
+ENV NEXT_PUBLIC_CUSTOM_REFRESH_URL=${NEXT_PUBLIC_CUSTOM_REFRESH_URL}
+
+
+ARG NEXT_PUBLIC_POSTHOG_KEY
+ARG NEXT_PUBLIC_POSTHOG_HOST
+ENV NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY}
+ENV NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
+
+ARG NEXT_PUBLIC_CLOUD_ENABLED
+ENV NEXT_PUBLIC_CLOUD_ENABLED=${NEXT_PUBLIC_CLOUD_ENABLED}
+
+ARG NEXT_PUBLIC_SENTRY_DSN
+ENV NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN} 
+
+ARG NEXT_PUBLIC_GTM_ENABLED
+ENV NEXT_PUBLIC_GTM_ENABLED=${NEXT_PUBLIC_GTM_ENABLED}
 
 # Note: Don't expose ports here, Compose will handle that for us if necessary. 
 # If you want to run this without compose, specify the ports to 

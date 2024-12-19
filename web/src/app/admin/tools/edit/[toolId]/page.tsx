@@ -1,13 +1,18 @@
 import { ErrorCallout } from "@/components/ErrorCallout";
-import { Card, Text, Title } from "@tremor/react";
+import Text from "@/components/ui/text";
+import Title from "@/components/ui/title";
+import CardSection from "@/components/admin/CardSection";
 import { ToolEditor } from "@/app/admin/tools/ToolEditor";
 import { fetchToolByIdSS } from "@/lib/tools/fetchTools";
 import { DeleteToolButton } from "./DeleteToolButton";
-import { FiTool } from "react-icons/fi";
 import { AdminPageTitle } from "@/components/admin/Title";
 import { BackButton } from "@/components/BackButton";
+import { ToolIcon } from "@/components/icons/icons";
 
-export default async function Page({ params }: { params: { toolId: string } }) {
+export default async function Page(props: {
+  params: Promise<{ toolId: string }>;
+}) {
+  const params = await props.params;
   const tool = await fetchToolByIdSS(params.toolId);
 
   let body;
@@ -25,9 +30,9 @@ export default async function Page({ params }: { params: { toolId: string } }) {
       <div className="w-full my-8">
         <div>
           <div>
-            <Card>
+            <CardSection>
               <ToolEditor tool={tool} />
-            </Card>
+            </CardSection>
 
             <Title className="mt-12">Delete Tool</Title>
             <Text>Click the button below to permanently delete this tool.</Text>
@@ -46,7 +51,7 @@ export default async function Page({ params }: { params: { toolId: string } }) {
 
       <AdminPageTitle
         title="Edit Tool"
-        icon={<FiTool size={32} className="my-auto" />}
+        icon={<ToolIcon size={32} className="my-auto" />}
       />
 
       {body}

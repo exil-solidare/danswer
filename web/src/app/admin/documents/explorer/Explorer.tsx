@@ -2,8 +2,8 @@
 
 import { adminSearch } from "./lib";
 import { MagnifyingGlass } from "@phosphor-icons/react";
-import { useState, useEffect } from "react";
-import { DanswerDocument } from "@/lib/search/interfaces";
+import { useState, useEffect, useCallback } from "react";
+import { OnyxDocument } from "@/lib/search/interfaces";
 import { buildDocumentSummaryDisplay } from "@/components/search/DocumentDisplay";
 import { CustomCheckbox } from "@/components/CustomCheckbox";
 import { updateHiddenStatus } from "../lib";
@@ -15,15 +15,16 @@ import { HorizontalFilters } from "@/components/search/filtering/Filters";
 import { useFilters } from "@/lib/hooks";
 import { buildFilters } from "@/lib/search/utils";
 import { DocumentUpdatedAtBadge } from "@/components/search/DocumentUpdatedAtBadge";
-import { Connector, DocumentSet } from "@/lib/types";
+import { DocumentSet } from "@/lib/types";
 import { SourceIcon } from "@/components/SourceIcon";
+import { Connector } from "@/lib/connectors/connectors";
 
 const DocumentDisplay = ({
   document,
   refresh,
   setPopup,
 }: {
-  document: DanswerDocument;
+  document: OnyxDocument;
   refresh: () => void;
   setPopup: (popupSpec: PopupSpec | null) => void;
 }) => {
@@ -116,23 +117,31 @@ export function Explorer({
 
   const [query, setQuery] = useState(initialSearchValue || "");
   const [timeoutId, setTimeoutId] = useState<number | null>(null);
-  const [results, setResults] = useState<DanswerDocument[]>([]);
+  const [results, setResults] = useState<OnyxDocument[]>([]);
 
   const filterManager = useFilters();
 
-  const onSearch = async (query: string) => {
-    const filters = buildFilters(
-      filterManager.selectedSources,
+  const onSearch = useCallback(
+    async (query: string) => {
+      const filters = buildFilters(
+        filterManager.selectedSources,
+        filterManager.selectedDocumentSets,
+        filterManager.timeRange,
+        filterManager.selectedTags
+      );
+      const results = await adminSearch(query, filters);
+      if (results.ok) {
+        setResults((await results.json()).documents);
+      }
+      setTimeoutId(null);
+    },
+    [
       filterManager.selectedDocumentSets,
+      filterManager.selectedSources,
       filterManager.timeRange,
-      filterManager.selectedTags
-    );
-    const results = await adminSearch(query, filters);
-    if (results.ok) {
-      setResults((await results.json()).documents);
-    }
-    setTimeoutId(null);
-  };
+      filterManager.selectedTags,
+    ]
+  );
 
   useEffect(() => {
     if (timeoutId !== null) {
@@ -160,7 +169,7 @@ export function Explorer({
     <div>
       {popup}
       <div className="justify-center py-2">
-        <div className="flex items-center w-full border-2 border-border rounded-lg px-4 py-2 focus-within:border-accent">
+        <div className="flex items-center w-full border-2 border-border rounded-lg px-4 py-2 focus-within:border-accent bg-background-search">
           <MagnifyingGlass />
           <textarea
             autoFocus
@@ -173,7 +182,11 @@ export function Explorer({
               setQuery(event.target.value);
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !(event.nativeEvent as any).isComposing
+              ) {
                 onSearch(query);
                 event.preventDefault();
               }
@@ -206,7 +219,7 @@ export function Explorer({
       )}
       {!query && (
         <div className="flex text-emphasis mt-3">
-          Search for a document above to modify it&apos;s boost or hide it from
+          Search for a document above to modify its boost or hide it from
           searches.
         </div>
       )}

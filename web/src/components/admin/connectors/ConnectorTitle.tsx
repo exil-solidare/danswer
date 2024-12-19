@@ -1,4 +1,3 @@
-import { getSourceMetadata } from "@/lib/sources";
 import {
   ConfluenceConfig,
   Connector,
@@ -8,7 +7,9 @@ import {
   JiraConfig,
   SlackConfig,
   ZulipConfig,
-} from "@/lib/types";
+} from "@/lib/connectors/connectors";
+import { getSourceMetadata } from "@/lib/sources";
+
 import Link from "next/link";
 
 interface ConnectorTitleProps {
@@ -47,31 +48,22 @@ export const ConnectorTitle = ({
     );
   } else if (connector.source === "confluence") {
     const typedConnector = connector as Connector<ConfluenceConfig>;
-    additionalMetadata.set(
-      "Wiki URL",
-      typedConnector.connector_specific_config.wiki_page_url
-    );
+    const wikiUrl = typedConnector.connector_specific_config.is_cloud
+      ? `${typedConnector.connector_specific_config.wiki_base}/wiki/spaces/${typedConnector.connector_specific_config.space}`
+      : `${typedConnector.connector_specific_config.wiki_base}/spaces/${typedConnector.connector_specific_config.space}`;
+    additionalMetadata.set("Wiki URL", wikiUrl);
+    if (typedConnector.connector_specific_config.page_id) {
+      additionalMetadata.set(
+        "Page ID",
+        typedConnector.connector_specific_config.page_id
+      );
+    }
   } else if (connector.source === "jira") {
     const typedConnector = connector as Connector<JiraConfig>;
     additionalMetadata.set(
       "Jira Project URL",
       typedConnector.connector_specific_config.jira_project_url
     );
-  } else if (connector.source === "google_drive") {
-    const typedConnector = connector as Connector<GoogleDriveConfig>;
-    if (
-      typedConnector.connector_specific_config?.folder_paths &&
-      typedConnector.connector_specific_config?.folder_paths.length > 0
-    ) {
-      additionalMetadata.set(
-        "Folders",
-        typedConnector.connector_specific_config.folder_paths.join(", ")
-      );
-    }
-
-    if (!isPublic && owner) {
-      additionalMetadata.set("Owner", owner);
-    }
   } else if (connector.source === "slack") {
     const typedConnector = connector as Connector<SlackConfig>;
     if (

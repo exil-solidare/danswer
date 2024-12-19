@@ -1,0 +1,125 @@
+Running Question Answering Flow
+Note that running metrics requires tokenizing all prompts/returns and slightly slows down inference.
+Also note that the text embedding model (bi-encoder) currently used is trained for relative distances, not absolute distances. Therefore cosine similarity values may all be > 0.5 even for poor matches
+Running Test for Question 1: Здравствуйте! Я гражданин России и Израиля. Хотел бы легализоваться во Франции. Говорю немного по-французски. Какие мои шансы и шаги?
+====Duration: 0:00:11.749505====
+Question 1:
+	Здравствуйте! Я гражданин России и Израиля. Хотел бы легализоваться во Франции. Говорю немного по-французски. Какие мои шансы и шаги?
+
+Approximate Expected Answer:
+	Здравствуйте! Ваши шансы на легализацию во Франции зависят от нескольких факторов, включая вашу текущую ситуацию и основания для легализации. Вот несколько шагов и возможностей, которые могут быть полезны: 1. Получение вида на жительство: Иностранный гражданин может осуществлять профессиональную деятельность во Франции только при условии предварительного получения разрешения на работу. Работодатель обязан проверять наличие разрешения на работу на протяжении всего трудового договора. 2. Легализация документов: Для легализации документов необходимо выполнить их перевод на французский язык, чтобы французские административные службы могли признать их законность. 3. Регуляризация статуса: Если вы находитесь во Франции нелегально, вы можете отправить заказное письмо в префектуру с просьбой об аннулировании IRTF вместе с запросом на вид на жительство и документами, подтверждающими право на легальное пребывание. 4. Поддержка и интеграция: Справочник Exil Solidaire предоставляет ключевую информацию об интеграции во Франции, что может помочь вам сохранить личную траекторию и способствовать успешной интеграции в любой административной ситуации.
+
+Actual Answer:
+	Ваши шансы на легализацию во Франции зависят от нескольких факторов, включая ваш статус,
+	профессиональные навыки и знание языка. Вот основные шаги, которые вам нужно предпринять:\n\n1.
+	**Выбор типа визы**: Вам нужно будет выбрать подходящий тип визы для въезда во Францию. Для
+	долгосрочного пребывания и легализации вам потребуется виза D или вид на жительство (DOCUMENT
+	9).\n\n2. **Подача заявления на вид на жительство**: Вы можете подать заявление на вид на
+	жительство, который позволит вам работать или вести бизнес во Франции. Учтите, что для получения
+	разрешения на работу компетентные службы оценивают состояние рынка труда и уровень безработицы в
+	вашем профессиональном секторе и регионе (DOCUMENT 3).\n\n3. **Изучение языка и интеграция**: Для
+	успешной интеграции во Франции вам нужно будет улучшить знание французского языка и ознакомиться с
+	местной культурой. Это важный шаг для долгосрочного пребывания (DOCUMENT 1).\n\n4. **Налоговая
+	регистрация**: Если вы планируете работать или вести бизнес во Франции, вам нужно будет
+	зарегистрироваться в налоговых органах и получить налоговый номер (DOCUMENT 7).\n\n5.
+	**Международная защита**: Если у вас есть основания для получения статуса беженца или субсидиарной
+	защиты, вы можете подать заявление в OFPRA. Ваша история должна быть написана или переведена на
+	французский язык и точно объяснять, кто вы, ваша национальность и откуда вы приехали (DOCUMENT
+	4).\n\n6. **Психологическая поддержка и медицинское страхование**: Вы можете претендовать на
+	бесплатную психологическую поддержку и медицинское страхование, если вы эвакуировались из Украины
+	или России (DOCUMENT 11).\n\n7. **Обмен водительских прав**: Если у вас есть водительские права, вы
+	можете обменять их на французские, так как Россия входит в список стран, для которых обмен возможен
+	(DOCUMENT 17).
+### Comparison of Expected and Actual Answers
+
+1. **General Structure and Content**:
+   - **Expected Answer**: The expected answer provides a structured approach to the process of legalizing in France, including obtaining a residence permit, legalizing documents, regularizing status, and integration support.
+   - **Actual Answer**: The actual answer also provides a structured approach but includes more specific steps such as choosing the type of visa, submitting a residence permit application, language and cultural integration, tax registration, international protection, psychological support, and exchanging driver's licenses.
+
+2. **Specificity and Detail**:
+   - **Expected Answer**: The expected answer is more general and focuses on broad categories of actions (e.g., obtaining a residence permit, legalizing documents).
+   - **Actual Answer**: The actual answer is more detailed and specific, providing concrete steps and mentioning specific documents and services (e.g., OFPRA for international protection, tax registration, psychological support).
+
+3. **Relevance and Practicality**:
+   - **Expected Answer**: The expected answer is practical but somewhat broad, which might require the user to seek additional information.
+   - **Actual Answer**: The actual answer is highly practical and detailed, offering specific actions and resources that the user can directly follow.
+
+4. **Language and Integration**:
+   - **Expected Answer**: Mentions the importance of language and integration but does not provide specific resources.
+   - **Actual Answer**: Emphasizes the importance of language and integration and suggests improving French language skills and understanding local culture.
+
+5. **Additional Support**:
+   - **Expected Answer**: Mentions integration support through Exil Solidaire.
+   - **Actual Answer**: Provides additional support options such as psychological support and medical insurance, which are particularly relevant for evacuees from Ukraine or Russia.
+
+### Score for the Actual Answer
+
+Considering the detailed, practical, and specific nature of the actual answer, it provides a comprehensive guide that is likely to be very useful for the user. The actual answer goes beyond the expected answer by offering more actionable steps and resources.
+
+**Score: 9**
+
+**Score: 09**
+
+Retrieval Metrics:
+No Retrieval Metrics Available
+
+Reranking Metrics:
+No Reranking Metrics Available
+
+
+
+Running Test for Question 2: Добрый день. Я украинка, замужем за гражданином Франции. Мой муж начал процесс развода. У меня нет дохода, работы, своего жилья. Чтобы создать семью во Франции я уволилась с работы в Украине. Сейчас я не могу вернуться в Украину из-за войны. Пока я живу в доме мужа, но он настаивает, чтобы я покинула дом. Да, он покупает продукты, даёт мне 100 евро в месяц. Имею ли я право на получение средств на мои жизненные потребности и в какой сумме? Если да, то от каких критериев зависит эта сумма? До какого срока я могу оставаться в доме моего мужа?
+====Duration: 0:00:07.462350====
+Question 2:
+	Добрый день. Я украинка, замужем за гражданином Франции. Мой муж начал процесс развода. У меня нет дохода, работы, своего жилья. Чтобы создать семью во Франции я уволилась с работы в Украине. Сейчас я не могу вернуться в Украину из-за войны. Пока я живу в доме мужа, но он настаивает, чтобы я покинула дом. Да, он покупает продукты, даёт мне 100 евро в месяц. Имею ли я право на получение средств на мои жизненные потребности и в какой сумме? Если да, то от каких критериев зависит эта сумма? До какого срока я могу оставаться в доме моего мужа?
+
+Approximate Expected Answer:
+	В вашей ситуации, учитывая что вы находитесь в процессе развода с гражданином Франции и не имеете дохода, работы или своего жилья, вы можете иметь право на получение временной защиты во Франции. Временная защита предоставляет вам право на временный вид на жительство, который позволяет работать и учиться, а также получать социальную помощь. Что касается вашего проживания в доме мужа и получения средств на жизненные потребности, это может зависеть от условий развода и решения суда. Временная защита может предоставить вам доступ к медицинскому страхованию и бесплатной психологической поддержке. Сумма средств на ваши жизненные потребности может зависеть от различных факторов, включая ваш текущий статус, наличие детей и другие обстоятельства. Вам следует обратиться к местным органам социальной защиты для получения более конкретной информации и помощи. Вы можете оставаться в доме вашего мужа до тех пор, пока не будет принято официальное решение суда о разводе и разделе имущества. Важно проконсультироваться с юристом, чтобы защитить свои права и интересы в процессе развода.
+
+Actual Answer:
+	Ваша ситуация требует рассмотрения нескольких аспектов. Во-первых, если вы подверглись домашнему или
+	семейному насилию, власти не могут отозвать ваш вид на жительство и обязаны продлить его по
+	истечении срока действия. Если насилие произошло после прибытия во Францию, но до получения первого
+	вида на жительство, вам выдается вид на жительство с пометкой 'vie privée et familiale' (частная и
+	семейная жизнь). Во-вторых, в случае развода, если у вас нет дохода и работы, вы можете обратиться
+	за социальной помощью. Сумма и условия предоставления помощи зависят от вашего статуса, наличия
+	детей и других факторов. Для получения более точной информации и помощи, вам следует обратиться в
+	местные социальные службы или к юристу, специализирующемуся на семейном праве и правах иммигрантов.
+### Comparison of Expected and Actual Answers
+
+**Expected Answer:**
+1. **Temporary Protection:** The expected answer mentions the possibility of obtaining temporary protection in France, which includes a temporary residence permit, the right to work and study, and access to social assistance.
+2. **Living Arrangements:** It suggests that you can stay in your husband's house until an official court decision on the divorce and property division is made.
+3. **Financial Support:** The expected answer indicates that the amount of financial support you might receive depends on various factors such as your current status and the presence of children.
+4. **Legal Advice:** It emphasizes the importance of consulting a lawyer to protect your rights and interests during the divorce process.
+
+**Actual Answer:**
+1. **Domestic Violence Consideration:** The actual answer brings up the issue of domestic or family violence, stating that authorities cannot revoke your residence permit and must extend it if you have been a victim.
+2. **Residence Permit:** It mentions that if violence occurred after arriving in France but before obtaining the first residence permit, you would be issued a permit marked 'vie privée et familiale' (private and family life).
+3. **Social Assistance:** The actual answer also discusses the possibility of obtaining social assistance, with the amount and conditions depending on your status and other factors.
+4. **Legal and Social Services:** It advises contacting local social services or a lawyer specializing in family law and immigrant rights for more precise information and assistance.
+
+### Analysis and Scoring
+
+- **Relevance:** Both answers address the key issues of residence, financial support, and the need for legal advice. However, the actual answer provides additional information about domestic violence, which could be highly relevant depending on the specific circumstances.
+- **Detail:** The expected answer is more detailed regarding the process of obtaining temporary protection and the right to stay in the house until a court decision. The actual answer is more focused on the legal protections against domestic violence and the types of residence permits available.
+- **Practicality:** Both answers are practical, but the actual answer might be more immediately useful if domestic violence is a concern.
+
+Given the above points, the actual answer is comprehensive and adds valuable information that could be crucial depending on the situation. However, it lacks some of the detailed steps and broader context provided in the expected answer.
+
+### Score
+
+Considering the relevance, detail, and practicality, I would rate the actual answer an 8 out of 10.
+
+score: 08
+
+Retrieval Metrics:
+No Retrieval Metrics Available
+
+Reranking Metrics:
+No Reranking Metrics Available
+
+
+
+Scores: [9, 8]
+Average Score: 8.5
