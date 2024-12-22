@@ -1,83 +1,93 @@
 [project]
-name = "danswer"
+name = "onyx"
 version = "0.1.0"
-description = "Danswer chatbot"
+description = "Onyx chatbot"
 authors = []
 dependencies = [
-    "mako==1.2.4",
-    "office365-rest-python-client==2.5.9",
-    "pygithub==1.58.2",
-    "sqlalchemy[mypy]==2.0.15",
-    "aiohttp==3.9.4",
+    "aiohttp==3.10.2",
     "alembic==1.10.4",
     "asyncpg==0.27.0",
-    "atlassian-python-api==3.37.0",
-    "beautifulsoup4==4.12.2",
+    "atlassian-python-api==3.41.16",
+    "beautifulsoup4==4.12.3",
     "boto3==1.34.84",
-    "celery==5.3.4",
+    "celery==5.5.0b4",
     "chardet==5.2.0",
     "dask==2023.8.1",
     "ddtrace==2.6.5",
     "distributed==2023.8.1",
+    "fastapi==0.109.2",
     "fastapi-users==12.1.3",
     "fastapi-users-db-sqlalchemy==5.0.0",
-    "filelock==3.12.0",
+    "filelock==3.15.4",
     "google-api-python-client==2.86.0",
     "google-auth-httplib2==0.1.0",
     "google-auth-oauthlib==1.0.0",
-    "httpcore==0.16.3",
-    "httpx[http2]==0.23.3",
-    "httpx-oauth==0.11.2",
-    "hubspot-api-client==8.1.0",
+    "httpcore==1.0.5",
+    "httpx[http2]==0.27.0",
+    "httpx-oauth==0.15.1",
     "huggingface-hub==0.20.1",
+    "hubspot-api-client==8.1.0",
     "jira==3.5.1",
+    "jsonref==1.1.0",
     "langchain==0.1.17",
-    "langchain-community==0.0.36",
     "langchain-core==0.1.50",
     "langchain-text-splitters==0.0.1",
-    "litellm==1.37.7",
+    "litellm==1.55.4",
     "llama-index==0.9.45",
-    "msal==1.26.0",
+    "lxml==5.3.0",
+    "lxml_html_clean==0.2.2",
+    "mako==1.2.4",
+    "msal==1.28.0",
     "nltk==3.8.1",
+    "office365-rest-python-client==2.5.9",
     "oauthlib==3.2.2",
-    "openai==1.14.3",
+    "openai==1.55.3",
     "openpyxl==3.1.2",
     "playwright==1.41.2",
     "psutil==5.9.5",
     "psycopg2-binary==2.9.9",
     "pycryptodome==3.19.1",
-    "pypdf==3.17.0",
+    "pydantic==2.8.2",
+    "pygithub==1.58.2",
+    "pypdf==4.3.0",
     "pytest-mock==3.12.0",
     "pytest-playwright==0.3.2",
     "python-dateutil==2.8.2",
-    "python-docx==1.1.0",
+    "python-docx==1.1.2",
     "python-dotenv==1.0.0",
     "python-gitlab==3.9.0",
     "python-multipart==0.0.7",
     "python-pptx==0.6.23",
     "pywikibot==9.0.0",
-    "requests==2.31.0",
+    "redis==5.0.8",
+    "requests==2.32.2",
     "requests-oauthlib==1.3.1",
     "retry==0.9.2",
     "rfc3986==1.5.0",
-    "rt==3.1.2",
+    "simple-salesforce==1.12.6",
     "slack-sdk==3.20.2",
+    "sqlalchemy[mypy]==2.0.15",
     "starlette==0.36.3",
     "supervisor==4.2.5",
-    "tiktoken==0.4.0",
-    "timeago==1.0.16",
-    "zenpy==2.0.41",
-    "zulip==0.8.2",
-    "fastapi==0.109.2",
-    "pydantic==1.10.13",
-    "transformers==4.39.2",
-    "uvicorn==0.21.1",
     "telebot==0.0.5",
     "tgcrypto==1.2.5",
+    "tiktoken==0.7.0",
+    "timeago==1.0.16",
+    "trafilatura==1.12.2",
+    "transformers==4.39.2",
+    "unstructured==0.15.1",
+    "unstructured-client==0.25.4",
+    "urllib3==2.2.3",
+    "uvicorn==0.21.1",
+    "zulip==0.8.2",
     "dropbox==11.36.2",
     "pyrogram==2.0.106",
-    "notion-client>=2.2.1",
-    "simple-salesforce>=1.12.6",
+    "asana==5.0.8",
+    "boto3-stubs[s3]==1.34.133",
+    "stripe==10.12.0",
+    "mistune==0.8.4",
+    "sentry-sdk==2.14.0",
+    "prometheus_client==0.21.0",
 ]
 readme = "README.md"
 requires-python = ">= 3.11"
@@ -90,49 +100,51 @@ build-backend = "hatchling.build"
 managed = true
 dev-dependencies = [
     "black==23.3.0",
+    "boto3-stubs[s3]==1.34.133",
     "celery-types==0.19.0",
+    "cohere==5.6.1",
+    "google-cloud-aiplatform==1.58.0",
+    "ipykernel>=6.29.4",
+    "ipywidgets>=8.1.3",
+    "lxml==5.3.0",
+    "lxml_html_clean==0.2.2",
     "mypy-extensions>=1.0.0",
-    "mypy>=1.10.0",
+    "mypy>=1.8.0",
+    "pandas-stubs==2.2.3.241009",
+    "pandas==2.2.3",
+    "posthog==3.7.4",
     "pre-commit==3.2.2",
+    "pytest-asyncio==0.22.0",
+    "pytest==7.4.4",
     "reorder-python-imports==3.9.0",
     "ruff==0.0.286",
-    "types-pyyaml==6.0.12.11",
+    "sentence-transformers==2.6.1",
+    "tqdm>=4.66.4",
+    "trafilatura==1.12.2",
     "types-beautifulsoup4==4.12.0.3",
     "types-html5lib==1.1.11.13",
     "types-oauthlib==3.2.0.9",
-    "types-setuptools==68.0.0.3",
     "types-passlib==1.7.7.20240106",
+    "types-Pillow==10.2.0.20240822",
     "types-psutil==5.9.5.17",
     "types-psycopg2==2.9.21.10",
     "types-python-dateutil==2.8.19.13",
     "types-pytz==2023.3.1.1",
+    "types-pyyaml==6.0.12.11",
     "types-regex==2023.3.23.1",
     "types-requests==2.28.11.17",
     "types-retry==0.9.9.3",
+    "types-setuptools==68.0.0.3",
     "types-urllib3==1.26.25.11",
-    "ipykernel>=6.29.4",
-    "tqdm>=4.66.4",
-    "ipywidgets>=8.1.3",
+    "voyageai==0.2.3",
 ]
-virtual = false # We install danswer as package to make it possible to easily test it in notebooks
+virtual = false
 
 [tool.hatch.metadata]
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["danswer"] # path here
-
-[tool.rye.workspace]
-#members = ["models_server*"] # we will only need this if we decide to use models_server as a package.
-
-[tool.rye.scripts]
-model_server = { cmd = "uvicorn model_server.main:app --reload --port 9000" }
-background_tasks = { cmd = "python ./scripts/dev_run_background_jobs.py" }
-main_server = { cmd = " uvicorn danswer.main:app --reload --port 8080", env = { AUTH_TYPE = "disabled" } }
-main_server_with_auth = { cmd = "uvicorn danswer.main:app --reload --port 8080", env = { AUTH_TYPE = "google_oauth" } }
-run_migrations = { cmd = "alembic upgrade head" }
-solidaire_tests = { cmd = "python tests/regression/answer_quality/eval_direct_qa.py tests/regression/answer_quality/exil_solidaire.yaml --output tests/regression/answer_quality/exil_solidaire_output.yaml" }
-chattest = { cmd = "python chattest.py" }
+packages = ["onyx"]
 
 [tool.mypy]
 plugins = "sqlalchemy.ext.mypy.plugin"
@@ -152,3 +164,12 @@ disable_error_code = ["var-annotated"]
 ignore = []
 line-length = 130
 select = ["E", "F", "W"]
+
+[tool.rye.scripts]
+model_server = { cmd = "uvicorn model_server.main:app --reload --port 9000" }
+background_tasks = { cmd = "python ./scripts/dev_run_background_jobs.py" }
+main_server = { cmd = " uvicorn onyx.main:app --reload --port 8080", env = { AUTH_TYPE = "disabled" } }
+main_server_with_auth = { cmd = "uvicorn onyx.main:app --reload --port 8080", env = { AUTH_TYPE = "google_oauth" } }
+run_migrations = { cmd = "alembic upgrade head" }
+solidaire_tests = { cmd = "python tests/regression/answer_quality/eval_direct_qa.py tests/regression/answer_quality/exil_solidaire.yaml --output tests/regression/answer_quality/exil_solidaire_output.yaml" }
+chattest = { cmd = "python chattest.py" }

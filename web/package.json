@@ -4,8 +4,8 @@
   "version-comment": "version field must be SemVer or chromatic will barf",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "dev-local": "WEB_DOMAIN=http://localhost:3000 next dev --turbopack",
+    "dev": "next dev --turbo",
+    "dev-local": "WEB_DOMAIN=http://localhost:3000 next dev --turbo",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
