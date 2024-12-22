@@ -7,7 +7,7 @@ on:
       - "*"
 
 env:
-  REGISTRY_IMAGE: onyxdotapp/onyx-web-server-cloud
+  REGISTRY_IMAGE: alexbalandi/onyx-web-server-cloud
   LATEST_TAG: ${{ contains(github.ref_name, 'latest') }}
 
 jobs:

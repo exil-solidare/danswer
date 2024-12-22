@@ -30,8 +30,8 @@ jobs:
 
       - name: Pull, Tag and Push Web Server Image
         run: |
-          docker buildx imagetools create -t onyxdotapp/onyx-web-server:latest onyxdotapp/onyx-web-server:${{ github.event.inputs.version }}
+          docker buildx imagetools create -t alexbalandi/onyx-web-server:latest alexbalandi/onyx-web-server:${{ github.event.inputs.version }}
 
       - name: Pull, Tag and Push API Server Image
         run: |
-          docker buildx imagetools create -t onyxdotapp/onyx-backend:latest onyxdotapp/onyx-backend:${{ github.event.inputs.version }}
+          docker buildx imagetools create -t alexbalandi/onyx-backend:latest alexbalandi/onyx-backend:${{ github.event.inputs.version }}
