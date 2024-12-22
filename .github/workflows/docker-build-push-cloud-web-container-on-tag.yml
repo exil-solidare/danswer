@@ -1,11 +1,7 @@
 name: Build and Push Cloud Web Image on Tag
 # Identical to the web container build, but with correct image tag and build args
 
-on:
-  push:
-    tags:
-      - "*"
-
+on: workflow_dispatch
 env:
   REGISTRY_IMAGE: alexbalandi/onyx-web-server-cloud
   LATEST_TAG: ${{ contains(github.ref_name, 'latest') }}

@@ -1,9 +1,6 @@
 name: Build and Push Web Image on Tag
 
-on:
-  push:
-    tags:
-      - "*"
+on: workflow_dispatch
 
 env:
   REGISTRY_IMAGE: alexbalandi/onyx-web-server
