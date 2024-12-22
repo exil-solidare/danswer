@@ -222,3 +222,42 @@ def get_search_session(
         ],
     )
     return response
+
+
+@basic_router.post(
+    "/simple-search"
+)  # TODO: This is a custom endpoint for simple search without llms, currently copy admin search
+def simple_search(
+    question: AdminSearchRequest,
+    db_session: Session = Depends(get_session),
+) -> AdminSearchResponse:
+    query = question.query
+    logger.notice(f"Received admin search query: {query}")
+    final_filters = IndexFilters(
+        source_type=question.filters.source_type,
+        document_set=question.filters.document_set,
+        time_cutoff=question.filters.time_cutoff,
+        tags=question.filters.tags,
+        access_control_list=None,  # FIXME: gotta dig into how onyx team handles docs access
+    )
+    search_settings = get_current_search_settings(db_session)
+    document_index = get_default_document_index(
+        primary_index_name=search_settings.index_name, secondary_index_name=None
+    )
+    if not isinstance(document_index, VespaIndex):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot use admin-search when using a non-Vespa document index",
+        )
+    matching_chunks = document_index.admin_retrieval(query=query, filters=final_filters)
+
+    documents = chunks_or_sections_to_search_docs(matching_chunks)
+
+    # Deduplicate documents by id
+    deduplicated_documents: list[SearchDoc] = []
+    seen_documents: set[str] = set()
+    for document in documents:
+        if document.document_id not in seen_documents:
+            deduplicated_documents.append(document)
+            seen_documents.add(document.document_id)
+    return AdminSearchResponse(documents=deduplicated_documents)
