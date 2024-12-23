@@ -401,6 +401,7 @@ class SearchTool(Tool):
         if self.selected_sections:
             yield from self._build_response_for_specified_sections(query)
             return
+        tag_report = ""
         if "[DTAGS]" in self.persona.description:
             dtags_config_str = self.persona.description.split("[DTAGS]")[-1].split(
                 "[/DTAGS]"
