@@ -560,6 +560,7 @@ class NotionConnector(LoadConnector, PollConnector):
                         # all the tags and other metadata from the original page
                         bckup_page = page
                         page = self._fetch_page(source_id)
+                        page.url = bckup_page.url
                     except Exception:
                         logger.warning(
                             f"Failed to fetch source page with ID '{source_id}' for page with ID '{page.id}'. "
