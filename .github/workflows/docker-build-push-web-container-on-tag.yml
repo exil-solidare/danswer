@@ -1,7 +1,9 @@
 name: Build and Push Web Image on Tag
 
-on: workflow_dispatch
-
+on:
+  push:
+    tags:
+      - "*"
 env:
   REGISTRY_IMAGE: alexbalandi/onyx-web-server
   LATEST_TAG: ${{ contains(github.ref_name, 'latest') }}

@@ -26,7 +26,6 @@ export interface Persona {
   is_public: boolean;
   display_priority: number | null;
   description: string;
-  custom_code: string | null;
   document_sets: DocumentSet[];
   prompts: Prompt[];
   tools: ToolSnapshot[];

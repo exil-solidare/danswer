@@ -7,6 +7,7 @@ from datetime import timezone
 from typing import Any
 from typing import Optional
 
+import requests
 from retry import retry
 
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
@@ -134,6 +135,8 @@ class NotionConnector(LoadConnector, PollConnector):
         }
         self.indexed_pages: set[str] = set()
         self.root_page_id = root_page_id
+        self.is_db = False
+        self.database_name = None
         # if enabled, will recursively index child pages as they are found rather
         # relying entirely on the `search` API. We have received reports that the
         # `search` API misses many pages - in those cases, this might need to be
@@ -142,6 +145,29 @@ class NotionConnector(LoadConnector, PollConnector):
         # all pages regardless of if they are updated. If the notion workspace is
         # very large, this may not be practical.
         self.recursive_index_enabled = recursive_index_enabled or self.root_page_id
+
+    def check_if_db_and_set_dbname(self, database_id: str) -> bool:
+        """Check if a page is a database"""
+        logger.debug(f"Checking if it is database for ID '{database_id}'")
+        block_url = f"https://api.notion.com/v1/databases/{database_id}/query"
+        body = None
+        res = requests.post(
+            block_url,
+            headers=self.headers,
+            json=body,
+            timeout=_NOTION_CALL_TIMEOUT,
+        )
+        if res.status_code == 404:
+            return False
+        else:
+            logger.info("Database found")
+            database_name = res.json().get("title")
+            self.database_name = (
+                database_name[0].get("text", {}).get("content")
+                if database_name
+                else None
+            )  # TODO: kinda unelegant, because ideally we want to mutate state in separate function
+            return True
 
     @retry(tries=3, delay=1, backoff=2)
     def _fetch_child_blocks(
@@ -191,35 +217,41 @@ class NotionConnector(LoadConnector, PollConnector):
         try:
             res.raise_for_status()
         except Exception as e:
-            logger.warning(
-                f"Failed to fetch page, trying database for ID '{page_id}'. Exception: {e}"
-            )
-            # Try fetching as a database if page fetch fails, this happens if the page is set to a wiki
-            # it becomes a database from the notion perspective
-            return self._fetch_database_as_page(page_id)
-        return NotionPage(**res.json())
-
-    @retry(tries=3, delay=1, backoff=2)
-    def _fetch_database_as_page(self, database_id: str) -> NotionPage:
-        """Attempt to fetch a database as a page."""
-        logger.debug(f"Fetching database for ID '{database_id}' as a page")
-        database_url = f"https://api.notion.com/v1/databases/{database_id}"
-        res = rl_requests.get(
-            database_url,
-            headers=self.headers,
-            timeout=_NOTION_CALL_TIMEOUT,
-        )
-        try:
-            res.raise_for_status()
-        except Exception as e:
-            logger.exception(f"Error fetching database as page - {res.json()}")
+            logger.warning(f"Failed to fetch page '{page_id}'. Exception: {e}")
             raise e
-        database_name = res.json().get("title")
-        database_name = (
-            database_name[0].get("text", {}).get("content") if database_name else None
-        )
+            # ES: commenting out because we handle databases as roots
 
-        return NotionPage(**res.json(), database_name=database_name)
+            # logger.warning(
+            #     f"Failed to fetch page, trying database for ID '{page_id}'. Exception: {e}"
+            # )
+            # # Try fetching as a database if page fetch fails, this happens if the page is set to a wiki
+            # # it becomes a database from the notion perspective
+            # return self._fetch_database_as_page(page_id)
+        json_res = res.json()
+        json_res["database_name"] = self.database_name
+        return NotionPage(**json_res)
+
+    # @retry(tries=3, delay=1, backoff=2)
+    # def _fetch_database_as_page(self, database_id: str) -> NotionPage:
+    #     """Attempt to fetch a database as a page."""
+    #     logger.debug(f"Fetching database for ID '{database_id}' as a page")
+    #     database_url = f"https://api.notion.com/v1/databases/{database_id}"
+    #     res = rl_requests.get(
+    #         database_url,
+    #         headers=self.headers,
+    #         timeout=_NOTION_CALL_TIMEOUT,
+    #     )
+    #     try:
+    #         res.raise_for_status()
+    #     except Exception as e:
+    #         logger.exception(f"Error fetching database as page - {res.json()}")
+    #         raise e
+    #     database_name = res.json().get("title")
+    #     database_name = (
+    #         database_name[0].get("text", {}).get("content") if database_name else None
+    #     )
+
+    #     return NotionPage(**res.json(), database_name=database_name)
 
     @retry(tries=3, delay=1, backoff=2)
     def _fetch_database(
@@ -374,6 +406,11 @@ class NotionConnector(LoadConnector, PollConnector):
 
             # this happens when a block is not shared with the integration
             if data is None:
+                logger.error(
+                    f"Unable to access block with ID '{base_block_id}'. "
+                    f"This is likely due to the block not being shared "
+                    f"with the Onyx integration."
+                )
                 return result_blocks, child_pages
 
             for result in data["results"]:
@@ -415,6 +452,10 @@ class NotionConnector(LoadConnector, PollConnector):
                         if "text" in rich_text:
                             text = rich_text["text"]["content"]
                             cur_result_text_arr.append(text)
+
+                # if result_type == "bookmark": # it seems we're safe adding urls even if they're not in bookmarks
+                if "url" in result_obj:
+                    cur_result_text_arr.append(result_obj["url"])
 
                 if result["has_children"]:
                     if result_type == "child_page":
@@ -467,6 +508,20 @@ class NotionConnector(LoadConnector, PollConnector):
 
         return page_title
 
+    @staticmethod
+    def _extract_source_id_from_href_page(page: NotionPage) -> str | None:
+        """
+        Extracts the source ID from a page that is a href to another page
+        """
+        try:
+            title_objects = page.properties.get("Page", {}).get("title", [])
+            for obj in title_objects:
+                if obj.get("type") == "mention" and "mention" in obj:
+                    return obj["mention"].get("page", {}).get("id")
+            return None
+        except (AttributeError, KeyError):
+            return None
+
     def _read_pages(
         self,
         pages: list[NotionPage],
@@ -483,25 +538,42 @@ class NotionConnector(LoadConnector, PollConnector):
         https://developers.notion.com/docs/working-with-page-content
         """
         all_child_page_ids: list[str] = []
-        for page in pages:
-            if page.id in self.indexed_pages:
-                logger.debug(f"Already indexed page with ID '{page.id}'. Skipping.")
-                continue
+        for page in pages[:5]:
+            metadata = get_tags(page)
+            # hack that makes sure if you have URL property with exactly this name it will be used as the link
+            if "URL" in page.properties:
+                page.url = page.properties["URL"].get("url", page.url)
 
             logger.info(f"Reading page with ID '{page.id}', with url {page.url}")
             page_blocks, child_page_ids = self._read_blocks(page.id)
             all_child_page_ids.extend(child_page_ids)
 
             if not page_blocks:
+                # this might be because our page is empty but has href to actual page
+                source_id = self._extract_source_id_from_href_page(page)
+                if source_id:
+                    logger.info(f"Found source ID {source_id} in page {page.id}")
+                    try:
+                        # IMPORTANT: we overwrite the page with the actual page after getting
+                        # all the tags and other metadata from the original page
+                        bckup_page = page
+                        page = self._fetch_page(source_id)
+                    except Exception:
+                        logger.warning(
+                            f"Failed to fetch source page with ID '{source_id}' for page with ID '{page.id}'. "
+                        )
+                        page = bckup_page
+                    page_blocks, child_page_ids = self._read_blocks(page.id)
+                    all_child_page_ids.extend(child_page_ids)
+                else:
+                    # going this route means page is truly empty, we skip
+                    continue
+            if page.id in self.indexed_pages:
+                logger.debug(f"Already indexed page with ID '{page.id}'. Skipping.")
                 continue
-
             page_title = (
                 self._read_page_title(page) or f"Untitled Page with ID {page.id}"
             )
-            metadata = get_tags(page)
-            # hack that makes sure if you have URL property with exactly this name it will be used as the link
-            if "URL" in page.properties:
-                page.url = page.properties["URL"].get("url", page.url)
 
             yield (
                 Document(
@@ -587,7 +659,12 @@ class NotionConnector(LoadConnector, PollConnector):
             "Recursively loading pages from Notion based on root page with "
             f"ID: {self.root_page_id}"
         )
-        pages = [self._fetch_page(page_id=self.root_page_id)]
+        if self.is_db:
+            page_blocks, page_ids = self._read_pages_from_database(self.root_page_id)
+            pages = [self._fetch_page(page_id=page_id) for page_id in page_ids]
+        else:
+            pages = [self._fetch_page(page_id=self.root_page_id)]
+
         yield from batch_generator(self._read_pages(pages), self.batch_size)
 
     def load_credentials(self, credentials: dict[str, Any]) -> dict[str, Any] | None:
@@ -595,6 +672,11 @@ class NotionConnector(LoadConnector, PollConnector):
         self.headers[
             "Authorization"
         ] = f'Bearer {credentials["notion_integration_token"]}'
+        self.is_db = (
+            self.check_if_db_and_set_dbname(self.root_page_id)
+            if self.root_page_id
+            else False
+        )
         return None
 
     def load_from_state(self) -> GenerateDocumentsOutput:

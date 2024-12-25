@@ -305,7 +305,6 @@ export function AssistantEditor({
             description: Yup.string().required(
               "Must provide a description for the Assistant"
             ),
-            custom_code: Yup.string().nullable(),
             system_prompt: Yup.string(),
             task_prompt: Yup.string(),
             is_public: Yup.boolean().required(),
@@ -427,7 +426,6 @@ export function AssistantEditor({
                 user && !checkUserIsNoAuthUser(user.id) ? [user.id] : undefined,
               groups,
               tool_ids: enabledTools,
-              custom_code: "",
             });
           }
 

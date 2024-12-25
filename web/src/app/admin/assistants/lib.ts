@@ -4,7 +4,6 @@ import { Persona, StarterMessage } from "./interfaces";
 interface PersonaCreationRequest {
   name: string;
   description: string;
-  custom_code: string;
   system_prompt: string;
   task_prompt: string;
   document_set_ids: number[];
@@ -31,7 +30,6 @@ interface PersonaUpdateRequest {
   id: number;
   existingPromptId: number | undefined;
   name: string;
-  custom_code: string;
   description: string;
   system_prompt: string;
   task_prompt: string;
@@ -156,7 +154,6 @@ function buildPersonaAPIBody(
   const {
     name,
     description,
-    custom_code,
     document_set_ids,
     num_chunks,
     llm_relevance_filter,
@@ -179,7 +176,6 @@ function buildPersonaAPIBody(
   return {
     name,
     description,
-    custom_code,
     num_chunks,
     llm_relevance_filter,
     llm_filter_extraction: false,

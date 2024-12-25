@@ -11,8 +11,6 @@ export interface AuthTypeMetadata {
 }
 
 export const getAuthTypeMetadataSS = async (): Promise<AuthTypeMetadata> => {
-  // TODO: This is a hack to fix the issue with the fetch failing
-  const res_chk = await fetch(buildUrl("/auth/type"));
   const res = await fetch(buildUrl("/auth/type"));
   if (!res.ok) {
     throw new Error("Failed to fetch data");
@@ -117,6 +115,7 @@ export const getAuthUrlSS = async (
       return await getGoogleOAuthUrlSS(nextUrl);
     }
     case "cloud": {
+      console.log("LLpp");
       return await getGoogleOAuthUrlSS(nextUrl);
     }
     case "saml": {

@@ -103,12 +103,14 @@ export const LogoIcon = ({
   className = defaultTailwindCSS,
   src,
 }: LogoIconProps) => (
-  <div
+  <Image
     style={{ width: `${size}px`, height: `${size}px` }}
     className={`w-[${size}px] h-[${size}px] ` + className}
-  >
-    <Image src={src} alt="Logo" width="96" height="96" />
-  </div>
+    src={src}
+    alt="Logo"
+    width="96"
+    height="96"
+  />
 );
 
 export const AssistantsIconSkeleton = ({
@@ -1121,12 +1123,16 @@ export const MetaIcon = ({
 export const MicrosoftIconSVG = ({
   size = 16,
   className = defaultTailwindCSS,
-}: IconProps) => <LogoIcon size={size} className={className} src={microsoftSVG} />;
+}: IconProps) => (
+  <LogoIcon size={size} className={className} src={microsoftSVG} />
+);
 
 export const MistralIcon = ({
   size = 16,
   className = defaultTailwindCSS,
-}: IconProps) => <LogoIcon size={size} className={className} src={mistralSVG} />;
+}: IconProps) => (
+  <LogoIcon size={size} className={className} src={mistralSVG} />
+);
 
 export const VoyageIcon = ({
   size = 16,
