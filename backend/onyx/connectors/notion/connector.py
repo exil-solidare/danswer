@@ -81,7 +81,9 @@ def get_tags(page: NotionPage) -> dict[str, list[str] | str]:
             else:
                 logger.warning(f"{property_tags} is not a dict or list")
                 continue
-            print(f"Adding tags for {property_name}: {collected_tags}")
+            logger.info(
+                f"Adding tags for {property_name} for {page.url}: {collected_tags}"
+            )
             tags_by_name[property_name] = collected_tags
 
     return tags_by_name if tags_by_name else {}
@@ -538,7 +540,7 @@ class NotionConnector(LoadConnector, PollConnector):
         https://developers.notion.com/docs/working-with-page-content
         """
         all_child_page_ids: list[str] = []
-        for page in pages[:5]:
+        for page in pages:
             metadata = get_tags(page)
             # hack that makes sure if you have URL property with exactly this name it will be used as the link
             if "URL" in page.properties:
