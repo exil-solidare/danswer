@@ -1,22 +1,21 @@
-import { Popup } from "../admin/connectors/Popup";
+import { PopupSpec } from "../admin/connectors/Popup";
 import { useState } from "react";
-import { TabGroup, TabList, Tab, TabPanels, TabPanel } from "@tremor/react";
-import { WellKnownLLMProviderDescriptor } from "@/app/admin/models/llm/interfaces";
-import { LLMProviderUpdateForm } from "@/app/admin/models/llm/LLMProviderUpdateForm";
-import { CustomLLMProviderUpdateForm } from "@/app/admin/models/llm/CustomLLMProviderUpdateForm";
+import { Tabs, TabsList, TabsContent, TabsTrigger } from "@/components/ui/tabs";
+import { WellKnownLLMProviderDescriptor } from "@/app/admin/configuration/llm/interfaces";
+import { LLMProviderUpdateForm } from "@/app/admin/configuration/llm/LLMProviderUpdateForm";
+import { CustomLLMProviderUpdateForm } from "@/app/admin/configuration/llm/CustomLLMProviderUpdateForm";
 
 export const ApiKeyForm = ({
   onSuccess,
   providerOptions,
+  setPopup,
+  hideSuccess,
 }: {
   onSuccess: () => void;
   providerOptions: WellKnownLLMProviderDescriptor[];
+  setPopup: (popup: PopupSpec) => void;
+  hideSuccess?: boolean;
 }) => {
-  const [popup, setPopup] = useState<{
-    message: string;
-    type: "success" | "error";
-  } | null>(null);
-
   const defaultProvider = providerOptions[0]?.name;
   const providerNameToIndexMap = new Map<string, number>();
   providerOptions.forEach((provider, index) => {
@@ -33,45 +32,53 @@ export const ApiKeyForm = ({
 
   return (
     <div>
-      {popup && <Popup message={popup.message} type={popup.type} />}
-      <TabGroup
-        index={providerNameToIndexMap.get(providerName) || 0}
-        onIndexChange={(index) =>
-          setProviderName(providerIndexToNameMap.get(index) || defaultProvider)
+      <Tabs
+        defaultValue={String(providerNameToIndexMap.get(providerName) || 0)}
+        onValueChange={(value) =>
+          setProviderName(
+            providerIndexToNameMap.get(Number(value)) || defaultProvider
+          )
         }
       >
-        <TabList className="mt-3 mb-4">
-          <>
-            {providerOptions.map((provider) => (
-              <Tab key={provider.name}>
-                {provider.display_name || provider.name}
-              </Tab>
-            ))}
-            <Tab key="custom">Custom</Tab>
-          </>
-        </TabList>
-        <TabPanels>
-          {providerOptions.map((provider) => {
-            return (
-              <TabPanel key={provider.name}>
-                <LLMProviderUpdateForm
-                  llmProviderDescriptor={provider}
-                  onClose={() => onSuccess()}
-                  shouldMarkAsDefault
-                  setPopup={setPopup}
-                />
-              </TabPanel>
-            );
-          })}
-          <TabPanel key="custom">
-            <CustomLLMProviderUpdateForm
+        <TabsList className="mt-3 mb-4">
+          {providerOptions.map((provider) => (
+            <TabsTrigger
+              key={provider.name}
+              value={String(providerNameToIndexMap.get(provider.name))}
+            >
+              {provider.display_name || provider.name}
+            </TabsTrigger>
+          ))}
+          <TabsTrigger value={String(providerOptions.length)}>
+            Custom
+          </TabsTrigger>
+        </TabsList>
+
+        {providerOptions.map((provider) => (
+          <TabsContent
+            key={provider.name}
+            value={String(providerNameToIndexMap.get(provider.name))}
+          >
+            <LLMProviderUpdateForm
+              hideAdvanced
+              llmProviderDescriptor={provider}
               onClose={() => onSuccess()}
               shouldMarkAsDefault
               setPopup={setPopup}
+              hideSuccess={hideSuccess}
             />
-          </TabPanel>
-        </TabPanels>
-      </TabGroup>
+          </TabsContent>
+        ))}
+
+        <TabsContent value={String(providerOptions.length)}>
+          <CustomLLMProviderUpdateForm
+            onClose={() => onSuccess()}
+            shouldMarkAsDefault
+            setPopup={setPopup}
+            hideSuccess={hideSuccess}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

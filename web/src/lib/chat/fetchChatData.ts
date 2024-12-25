@@ -13,15 +13,19 @@ import {
 } from "@/lib/types";
 import { ChatSession } from "@/app/chat/interfaces";
 import { Persona } from "@/app/admin/assistants/interfaces";
-import { FullEmbeddingModelResponse } from "@/app/admin/models/embedding/embeddingModels";
+import { FullEmbeddingModelResponse } from "@/components/embedding/interfaces";
 import { Settings } from "@/app/admin/settings/interfaces";
 import { fetchLLMProvidersSS } from "@/lib/llm/fetchLLMs";
-import { LLMProviderDescriptor } from "@/app/admin/models/llm/interfaces";
+import { LLMProviderDescriptor } from "@/app/admin/configuration/llm/interfaces";
 import { Folder } from "@/app/chat/folders/interfaces";
-import { personaComparator } from "@/app/admin/assistants/lib";
-import { cookies } from "next/headers";
-import { DOCUMENT_SIDEBAR_WIDTH_COOKIE_NAME } from "@/components/resizable/contants";
+import { cookies, headers } from "next/headers";
+import {
+  SIDEBAR_TOGGLED_COOKIE_NAME,
+  DOCUMENT_SIDEBAR_WIDTH_COOKIE_NAME,
+} from "@/components/resizable/constants";
 import { hasCompletedWelcomeFlowSS } from "@/components/initialSetup/welcome/WelcomeModalWrapper";
+import { NEXT_PUBLIC_DEFAULT_SIDEBAR_OPEN } from "../constants";
+import { redirect } from "next/navigation";
 
 interface FetchChatDataResult {
   user: User | null;
@@ -29,26 +33,25 @@ interface FetchChatDataResult {
   ccPairs: CCPairBasicInfo[];
   availableSources: ValidSources[];
   documentSets: DocumentSet[];
-  personas: Persona[];
   tags: Tag[];
   llmProviders: LLMProviderDescriptor[];
   folders: Folder[];
   openedFolders: Record<string, boolean>;
-  defaultPersonaId?: number;
+  defaultAssistantId?: number;
+  toggleSidebar: boolean;
   finalDocumentSidebarInitialWidth?: number;
   shouldShowWelcomeModal: boolean;
-  shouldDisplaySourcesIncompleteModal: boolean;
 }
 
 export async function fetchChatData(searchParams: {
   [key: string]: string;
 }): Promise<FetchChatDataResult | { redirect: string }> {
+  const requestCookies = await cookies();
   const tasks = [
     getAuthTypeMetadataSS(),
     getCurrentUserSS(),
-    fetchSS("/manage/indexing-status"),
+    fetchSS("/manage/connector-status"),
     fetchSS("/manage/document-set"),
-    fetchSS("/persona?include_default=true"),
     fetchSS("/chat/get-user-chat-sessions"),
     fetchSS("/query/valid-tags"),
     fetchLLMProvidersSS(),
@@ -62,8 +65,9 @@ export async function fetchChatData(searchParams: {
     | FullEmbeddingModelResponse
     | Settings
     | LLMProviderDescriptor[]
+    | [Persona[], string | null]
     | null
-  )[] = [null, null, null, null, null, null, null, null, null, null];
+  )[] = [null, null, null, null, null, null, null, null, null];
   try {
     results = await Promise.all(tasks);
   } catch (e) {
@@ -74,15 +78,24 @@ export async function fetchChatData(searchParams: {
   const user = results[1] as User | null;
   const ccPairsResponse = results[2] as Response | null;
   const documentSetsResponse = results[3] as Response | null;
-  const personasResponse = results[4] as Response | null;
-  const chatSessionsResponse = results[5] as Response | null;
-  const tagsResponse = results[6] as Response | null;
-  const llmProviders = (results[7] || []) as LLMProviderDescriptor[];
-  const foldersResponse = results[8] as Response | null; // Handle folders result
+
+  const chatSessionsResponse = results[4] as Response | null;
+
+  const tagsResponse = results[5] as Response | null;
+  const llmProviders = (results[6] || []) as LLMProviderDescriptor[];
+  const foldersResponse = results[7] as Response | null;
 
   const authDisabled = authTypeMetadata?.authType === "disabled";
   if (!authDisabled && !user) {
-    return { redirect: "/auth/login" };
+    const headersList = await headers();
+    const fullUrl = headersList.get("x-url") || "/chat";
+    const searchParamsString = new URLSearchParams(
+      searchParams as unknown as Record<string, string>
+    ).toString();
+    const redirectUrl = searchParamsString
+      ? `${fullUrl}?${searchParamsString}`
+      : fullUrl;
+    return redirect(`/auth/login?next=${encodeURIComponent(redirectUrl)}`);
   }
 
   if (user && !user.is_verified && authTypeMetadata?.requiresVerification) {
@@ -110,8 +123,11 @@ export async function fetchChatData(searchParams: {
       `Failed to fetch chat sessions - ${chatSessionsResponse?.text()}`
     );
   }
-  // Larger ID -> created later
-  chatSessions.sort((a, b) => (a.id > b.id ? -1 : 1));
+
+  chatSessions.sort(
+    (a, b) =>
+      new Date(b.time_created).getTime() - new Date(a.time_created).getTime()
+  );
 
   let documentSets: DocumentSet[] = [];
   if (documentSetsResponse?.ok) {
@@ -122,18 +138,6 @@ export async function fetchChatData(searchParams: {
     );
   }
 
-  let personas: Persona[] = [];
-  if (personasResponse?.ok) {
-    personas = await personasResponse.json();
-  } else {
-    console.log(`Failed to fetch personas - ${personasResponse?.status}`);
-  }
-  // remove those marked as hidden by an admin
-  personas = personas.filter((persona) => persona.is_visible);
-
-  // sort them in priority order
-  personas.sort(personaComparator);
-
   let tags: Tag[] = [];
   if (tagsResponse?.ok) {
     tags = (await tagsResponse.json()).tags;
@@ -141,35 +145,33 @@ export async function fetchChatData(searchParams: {
     console.log(`Failed to fetch tags - ${tagsResponse?.status}`);
   }
 
-  const defaultPersonaIdRaw = searchParams["assistantId"];
-  const defaultPersonaId = defaultPersonaIdRaw
-    ? parseInt(defaultPersonaIdRaw)
+  const defaultAssistantIdRaw = searchParams["assistantId"];
+  const defaultAssistantId = defaultAssistantIdRaw
+    ? parseInt(defaultAssistantIdRaw)
     : undefined;
 
-  const documentSidebarCookieInitialWidth = cookies().get(
+  const documentSidebarCookieInitialWidth = requestCookies.get(
     DOCUMENT_SIDEBAR_WIDTH_COOKIE_NAME
   );
+  const sidebarToggled = requestCookies.get(SIDEBAR_TOGGLED_COOKIE_NAME);
+
+  const toggleSidebar = sidebarToggled
+    ? sidebarToggled.value.toLocaleLowerCase() == "true" || false
+    : NEXT_PUBLIC_DEFAULT_SIDEBAR_OPEN;
+
   const finalDocumentSidebarInitialWidth = documentSidebarCookieInitialWidth
     ? parseInt(documentSidebarCookieInitialWidth.value)
     : undefined;
 
   const hasAnyConnectors = ccPairs.length > 0;
   const shouldShowWelcomeModal =
-    !hasCompletedWelcomeFlowSS() &&
+    !llmProviders.length &&
+    !hasCompletedWelcomeFlowSS(requestCookies) &&
     !hasAnyConnectors &&
     (!user || user.role === "admin");
-  const shouldDisplaySourcesIncompleteModal =
-    hasAnyConnectors &&
-    !shouldShowWelcomeModal &&
-    !ccPairs.some(
-      (ccPair) => ccPair.has_successful_run && ccPair.docs_indexed > 0
-    );
 
   // if no connectors are setup, only show personas that are pure
   // passthrough and don't do any retrieval
-  if (!hasAnyConnectors) {
-    personas = personas.filter((persona) => persona.num_chunks === 0);
-  }
 
   let folders: Folder[] = [];
   if (foldersResponse?.ok) {
@@ -178,7 +180,7 @@ export async function fetchChatData(searchParams: {
     console.log(`Failed to fetch folders - ${foldersResponse?.status}`);
   }
 
-  const openedFoldersCookie = cookies().get("openedFolders");
+  const openedFoldersCookie = requestCookies.get("openedFolders");
   const openedFolders = openedFoldersCookie
     ? JSON.parse(openedFoldersCookie.value)
     : {};
@@ -189,14 +191,13 @@ export async function fetchChatData(searchParams: {
     ccPairs,
     availableSources,
     documentSets,
-    personas,
     tags,
     llmProviders,
     folders,
     openedFolders,
-    defaultPersonaId,
+    defaultAssistantId,
     finalDocumentSidebarInitialWidth,
+    toggleSidebar,
     shouldShowWelcomeModal,
-    shouldDisplaySourcesIncompleteModal,
   };
 }

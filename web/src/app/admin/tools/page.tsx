@@ -1,11 +1,14 @@
 import { ToolsTable } from "./ToolsTable";
 import { ToolSnapshot } from "@/lib/tools/interfaces";
-import { FiPlusSquare, FiTool } from "react-icons/fi";
+import { FiPlusSquare } from "react-icons/fi";
 import Link from "next/link";
-import { Divider, Text, Title } from "@tremor/react";
+import { Separator } from "@/components/ui/separator";
+import Text from "@/components/ui/text";
+import Title from "@/components/ui/title";
 import { fetchSS } from "@/lib/utilsSS";
 import { ErrorCallout } from "@/components/ErrorCallout";
 import { AdminPageTitle } from "@/components/admin/Title";
+import { ToolIcon } from "@/components/icons/icons";
 
 export default async function Page() {
   const toolResponse = await fetchSS("/tool");
@@ -24,7 +27,7 @@ export default async function Page() {
   return (
     <div className="mx-auto container">
       <AdminPageTitle
-        icon={<FiTool size={32} className="my-auto" />}
+        icon={<ToolIcon size={32} className="my-auto" />}
         title="Tools"
       />
 
@@ -33,7 +36,7 @@ export default async function Page() {
       </Text>
 
       <div>
-        <Divider />
+        <Separator />
 
         <Title>Create a Tool</Title>
         <Link
@@ -58,7 +61,7 @@ export default async function Page() {
           </div>
         </Link>
 
-        <Divider />
+        <Separator />
 
         <Title>Existing Tools</Title>
         <ToolsTable tools={tools} />

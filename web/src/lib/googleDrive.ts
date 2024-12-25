@@ -1,9 +1,11 @@
-import { Credential } from "@/lib/types";
+import { Credential } from "./connectors/credentials";
 
 export const setupGoogleDriveOAuth = async ({
   isAdmin,
+  name,
 }: {
   isAdmin: boolean;
+  name: string;
 }): Promise<[string | null, string]> => {
   const credentialCreationResponse = await fetch("/api/manage/credential", {
     method: "POST",
@@ -13,8 +15,11 @@ export const setupGoogleDriveOAuth = async ({
     body: JSON.stringify({
       admin_public: isAdmin,
       credential_json: {},
+      source: "google_drive",
+      name: name,
     }),
   });
+
   if (!credentialCreationResponse.ok) {
     return [
       null,
@@ -33,6 +38,7 @@ export const setupGoogleDriveOAuth = async ({
       `Failed to create credential - ${authorizationUrlResponse.status}`,
     ];
   }
+
   const authorizationUrlJson = (await authorizationUrlResponse.json()) as {
     auth_url: string;
   };

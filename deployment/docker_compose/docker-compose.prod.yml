@@ -1,26 +1,35 @@
-version: '3'
 services:
   api_server:
-    image: danswer/danswer-backend:latest
+    image: onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}
     build:
       context: ../../backend
       dockerfile: Dockerfile
     command: >
-      /bin/sh -c "alembic upgrade head &&
-      echo \"Starting Danswer Api Server\" &&
-      uvicorn danswer.main:app --host 0.0.0.0 --port 8080"
+      /bin/sh -c "
+      alembic upgrade head &&
+      echo \"Starting Onyx Api Server\" &&
+      uvicorn onyx.main:app --host 0.0.0.0 --port 8080"
     depends_on:
       - relational_db
       - index
+      - cache
       - inference_model_server
     restart: always
     env_file:
       - .env
     environment:
-      - AUTH_TYPE=${AUTH_TYPE:-google_oauth}
+      - AUTH_TYPE=${AUTH_TYPE:-oidc}
       - POSTGRES_HOST=relational_db
       - VESPA_HOST=index
+      - REDIS_HOST=cache
       - MODEL_SERVER_HOST=${MODEL_SERVER_HOST:-inference_model_server}
+      - USE_IAM_AUTH=${USE_IAM_AUTH}
+      - AWS_REGION=${AWS_REGION-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY-}
+    # Uncomment the line below to use if IAM_AUTH is true and you are using iam auth for postgres
+    # volumes:
+    #   - ./bundle.pem:/app/bundle.pem:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     logging:
@@ -28,28 +37,40 @@ services:
       options:
         max-size: "50m"
         max-file: "6"
-
-
   background:
-    image: danswer/danswer-backend:latest
+    image: onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}
     build:
       context: ../../backend
       dockerfile: Dockerfile
-    command: /usr/bin/supervisord
+    command: >
+      /bin/sh -c "
+      if [ -f /etc/ssl/certs/custom-ca.crt ]; then
+        update-ca-certificates;
+      fi &&
+      /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"
     depends_on:
       - relational_db
       - index
+      - cache
       - inference_model_server
       - indexing_model_server
     restart: always
     env_file:
       - .env
     environment:
-      - AUTH_TYPE=${AUTH_TYPE:-google_oauth}
+      - AUTH_TYPE=${AUTH_TYPE:-oidc}
       - POSTGRES_HOST=relational_db
       - VESPA_HOST=index
+      - REDIS_HOST=cache
       - MODEL_SERVER_HOST=${MODEL_SERVER_HOST:-inference_model_server}
       - INDEXING_MODEL_SERVER_HOST=${INDEXING_MODEL_SERVER_HOST:-indexing_model_server}
+      - USE_IAM_AUTH=${USE_IAM_AUTH}
+      - AWS_REGION=${AWS_REGION-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY-}
+    # Uncomment the line below to use if IAM_AUTH is true and you are using iam auth for postgres
+    # volumes:
+    #   - ./bundle.pem:/app/bundle.pem:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     logging:
@@ -57,10 +78,17 @@ services:
       options:
         max-size: "50m"
         max-file: "6"
-
+    # Uncomment the following lines if you need to include a custom CA certificate
+    # This section enables the use of a custom CA certificate
+    # If present, the custom CA certificate is mounted as a volume
+    # The container checks for its existence and updates the system's CA certificates
+    # This allows for secure communication with services using custom SSL certificates
+    # volumes:
+    #   # Maps to the CA_CERT_PATH environment variable in the Dockerfile
+    #   - ${CA_CERT_PATH:-./custom-ca.crt}:/etc/ssl/certs/custom-ca.crt:ro
 
   web_server:
-    image: danswer/danswer-web-server:latest
+    image: onyxdotapp/onyx-web-server:${IMAGE_TAG:-latest}
     build:
       context: ../../web
       dockerfile: Dockerfile
@@ -70,6 +98,7 @@ services:
         - NEXT_PUBLIC_POSITIVE_PREDEFINED_FEEDBACK_OPTIONS=${NEXT_PUBLIC_POSITIVE_PREDEFINED_FEEDBACK_OPTIONS:-}
         - NEXT_PUBLIC_NEGATIVE_PREDEFINED_FEEDBACK_OPTIONS=${NEXT_PUBLIC_NEGATIVE_PREDEFINED_FEEDBACK_OPTIONS:-}
         - NEXT_PUBLIC_DISABLE_LOGOUT=${NEXT_PUBLIC_DISABLE_LOGOUT:-}
+        - NEXT_PUBLIC_THEME=${NEXT_PUBLIC_THEME:-}
     depends_on:
       - api_server
     restart: always
@@ -83,9 +112,9 @@ services:
         max-size: "50m"
         max-file: "6"
 
-
   relational_db:
     image: postgres:15.2-alpine
+    command: -c 'max_connections=250'
     restart: always
     # POSTGRES_USER and POSTGRES_PASSWORD should be set in .env file
     env_file:
@@ -98,9 +127,8 @@ services:
         max-size: "50m"
         max-file: "6"
 
-
   inference_model_server:
-    image: danswer/danswer-model-server:latest
+    image: onyxdotapp/onyx-model-server:${IMAGE_TAG:-latest}
     build:
       context: ../../backend
       dockerfile: Dockerfile.model_server
@@ -125,9 +153,8 @@ services:
         max-size: "50m"
         max-file: "6"
 
-
   indexing_model_server:
-    image: danswer/danswer-model-server:latest
+    image: onyxdotapp/onyx-model-server:${IMAGE_TAG:-latest}
     build:
       context: ../../backend
       dockerfile: Dockerfile.model_server
@@ -144,15 +171,15 @@ services:
       - INDEXING_ONLY=True
       # Set to debug to get more fine-grained logs
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - VESPA_SEARCHER_THREADS=${VESPA_SEARCHER_THREADS:-1}
     volumes:
       # Not necessary, this is just to reduce download time during startup
-      - model_cache_huggingface:/root/.cache/huggingface/
+      - indexing_huggingface_model_cache:/root/.cache/huggingface/
     logging:
       driver: json-file
       options:
         max-size: "50m"
         max-file: "6"
-
 
   # This container name cannot have an underscore in it due to Vespa expectations of the URL
   index:
@@ -169,12 +196,11 @@ services:
         max-size: "50m"
         max-file: "6"
 
-
   nginx:
     image: nginx:1.23.4-alpine
     restart: always
     # nginx will immediately crash with `nginx: [emerg] host not found in upstream`
-    # if api_server / web_server are not up 
+    # if api_server / web_server are not up
     depends_on:
       - api_server
       - web_server
@@ -185,25 +211,24 @@ services:
       - ../data/nginx:/etc/nginx/conf.d
       - ../data/certbot/conf:/etc/letsencrypt
       - ../data/certbot/www:/var/www/certbot
-    # sleep a little bit to allow the web_server / api_server to start up. 
-    # Without this we've seen issues where nginx shows no error logs but 
+    # sleep a little bit to allow the web_server / api_server to start up.
+    # Without this we've seen issues where nginx shows no error logs but
     # does not recieve any traffic
     logging:
       driver: json-file
       options:
         max-size: "50m"
         max-file: "6"
-    # the specified script waits for the api_server to start up. 
-    # Without this we've seen issues where nginx shows no error logs but 
-    # does not recieve any traffic  
+    # The specified script waits for the api_server to start up.
+    # Without this we've seen issues where nginx shows no error logs but
+    # does not recieve any traffic
     # NOTE: we have to use dos2unix to remove Carriage Return chars from the file
     # in order to make this work on both Unix-like systems and windows
-    command: > 
+    command: >
       /bin/sh -c "dos2unix /etc/nginx/conf.d/run-nginx.sh 
       && /etc/nginx/conf.d/run-nginx.sh app.conf.template"
     env_file:
       - .env.nginx
-
 
   # follows https://pentacent.medium.com/nginx-and-lets-encrypt-with-docker-in-less-than-5-minutes-b4b8a60d3a71
   certbot:
@@ -212,16 +237,28 @@ services:
     volumes:
       - ../data/certbot/conf:/etc/letsencrypt
       - ../data/certbot/www:/var/www/certbot
-    logging:
+    logging::wq
       driver: json-file
       options:
         max-size: "50m"
         max-file: "6"
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
 
+  cache:
+    image: redis:7.4-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    # docker silently mounts /data even without an explicit volume mount, which enables
+    # persistence. explicitly setting save and appendonly forces ephemeral behavior.
+    command: redis-server --save "" --appendonly no
 
 volumes:
   db_volume:
   vespa_volume:
   # Created by the container itself
   model_cache_huggingface:
+  indexing_huggingface_model_cache:
+
+
+

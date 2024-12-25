@@ -2,7 +2,10 @@ import { Persona } from "@/app/admin/assistants/interfaces";
 import { CCPairBasicInfo, DocumentSet, User } from "../types";
 import { getCurrentUserSS } from "../userSS";
 import { fetchSS } from "../utilsSS";
-import { FullLLMProvider } from "@/app/admin/models/llm/interfaces";
+import {
+  FullLLMProvider,
+  getProviderIcon,
+} from "@/app/admin/configuration/llm/interfaces";
 import { ToolSnapshot } from "../tools/interfaces";
 import { fetchToolsSS } from "../tools/fetchTools";
 
@@ -23,7 +26,7 @@ export async function fetchAssistantEditorInfoSS(
   | [null, string]
 > {
   const tasks = [
-    fetchSS("/manage/indexing-status"),
+    fetchSS("/manage/connector-status"),
     fetchSS("/manage/document-set"),
     fetchSS("/llm/provider"),
     // duplicate fetch, but shouldn't be too big of a deal
@@ -79,24 +82,37 @@ export async function fetchAssistantEditorInfoSS(
       `Failed to fetch LLM providers - ${await llmProvidersResponse.text()}`,
     ];
   }
+
   const llmProviders = (await llmProvidersResponse.json()) as FullLLMProvider[];
 
   if (personaId && personaResponse && !personaResponse.ok) {
     return [null, `Failed to fetch Persona - ${await personaResponse.text()}`];
   }
+
+  for (const provider of llmProviders) {
+    provider.icon = getProviderIcon(provider.provider);
+  }
+
   const existingPersona = personaResponse
     ? ((await personaResponse.json()) as Persona)
     : null;
 
-  return [
-    {
-      ccPairs,
-      documentSets,
-      llmProviders,
-      user,
-      existingPersona,
-      tools: toolsResponse,
-    },
-    null,
-  ];
+  let error: string | null = null;
+  if (existingPersona?.builtin_persona) {
+    return [null, "cannot update builtin persona"];
+  }
+
+  return (
+    error || [
+      {
+        ccPairs,
+        documentSets,
+        llmProviders,
+        user,
+        existingPersona,
+        tools: toolsResponse,
+      },
+      null,
+    ]
+  );
 }

@@ -9,19 +9,19 @@ import requests
 
 from alembic import command
 from alembic.config import Config
-from danswer.configs.app_configs import POSTGRES_DB
-from danswer.configs.app_configs import POSTGRES_HOST
-from danswer.configs.app_configs import POSTGRES_PASSWORD
-from danswer.configs.app_configs import POSTGRES_PORT
-from danswer.configs.app_configs import POSTGRES_USER
-from danswer.document_index.vespa.index import DOCUMENT_ID_ENDPOINT
-from danswer.utils.logger import setup_logger
+from onyx.configs.app_configs import POSTGRES_DB
+from onyx.configs.app_configs import POSTGRES_HOST
+from onyx.configs.app_configs import POSTGRES_PASSWORD
+from onyx.configs.app_configs import POSTGRES_PORT
+from onyx.configs.app_configs import POSTGRES_USER
+from onyx.document_index.vespa.index import DOCUMENT_ID_ENDPOINT
+from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
 
 
 def save_postgres(filename: str, container_name: str) -> None:
-    logger.info("Attempting to take Postgres snapshot")
+    logger.notice("Attempting to take Postgres snapshot")
     cmd = f"docker exec {container_name} pg_dump -U {POSTGRES_USER} -h {POSTGRES_HOST} -p {POSTGRES_PORT} -W -F t {POSTGRES_DB}"
     with open(filename, "w") as file:
         subprocess.run(
@@ -35,7 +35,7 @@ def save_postgres(filename: str, container_name: str) -> None:
 
 
 def load_postgres(filename: str, container_name: str) -> None:
-    logger.info("Attempting to load Postgres snapshot")
+    logger.notice("Attempting to load Postgres snapshot")
     try:
         alembic_cfg = Config("alembic.ini")
         command.upgrade(alembic_cfg, "head")
@@ -57,7 +57,7 @@ def load_postgres(filename: str, container_name: str) -> None:
 
 
 def save_vespa(filename: str) -> None:
-    logger.info("Attempting to take Vespa snapshot")
+    logger.notice("Attempting to take Vespa snapshot")
     continuation = ""
     params = {}
     doc_jsons: list[dict] = []
@@ -86,31 +86,31 @@ def load_vespa(filename: str) -> None:
             new_doc = json.loads(line.strip())
             doc_id = new_doc["update"].split("::")[-1]
             response = requests.post(
-                DOCUMENT_ID_ENDPOINT + "/" + doc_id, headers=headers, json=new_doc
+                DOCUMENT_ID_ENDPOINT + "/" + doc_id,
+                headers=headers,
+                json=new_doc,
             )
             response.raise_for_status()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Danswer checkpoint saving and loading."
+    parser = argparse.ArgumentParser(description="Onyx checkpoint saving and loading.")
+    parser.add_argument(
+        "--save", action="store_true", help="Save Onyx state to directory."
     )
     parser.add_argument(
-        "--save", action="store_true", help="Save Danswer state to directory."
-    )
-    parser.add_argument(
-        "--load", action="store_true", help="Load Danswer state from save directory."
+        "--load", action="store_true", help="Load Onyx state from save directory."
     )
     parser.add_argument(
         "--postgres_container_name",
         type=str,
-        default="danswer-stack-relational_db-1",
+        default="onyx-stack-relational_db-1",
         help="Name of the postgres container to dump",
     )
     parser.add_argument(
         "--checkpoint_dir",
         type=str,
-        default=os.path.join("..", "danswer_checkpoint"),
+        default=os.path.join("..", "onyx_checkpoint"),
         help="A directory to store temporary files to.",
     )
 

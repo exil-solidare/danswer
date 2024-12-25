@@ -2,6 +2,7 @@ import argparse
 import builtins
 from contextlib import contextmanager
 from datetime import datetime
+from string import punctuation
 from typing import Any
 from typing import TextIO
 
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 from danswer.chat.models import LLMMetricsContainer
 from danswer.configs.constants import MessageType
 from danswer.db.engine import get_sqlalchemy_engine
+from danswer.llm.factory import get_default_llm
 from danswer.one_shot_answer.answer_question import get_search_answer
 from danswer.one_shot_answer.models import DirectQARequest
 from danswer.one_shot_answer.models import ThreadMessage
@@ -20,9 +22,6 @@ from danswer.search.models import RerankMetricsContainer
 from danswer.search.models import RetrievalDetails
 from danswer.search.models import RetrievalMetricsContainer
 from danswer.utils.callbacks import MetricsHander
-
-from danswer.llm.factory import get_default_llm
-from string import punctuation
 
 
 engine = get_sqlalchemy_engine()
@@ -43,6 +42,7 @@ def load_yaml(filepath: str) -> dict:
         data = yaml.safe_load(file)
     return data
 
+
 def extract_score(msg: str) -> int:
     score_part = msg.split("core")[-1]
     score_cleaned = score_part.strip(punctuation).strip()
@@ -52,6 +52,7 @@ def extract_score(msg: str) -> int:
         score = 5
         print(f"Could not extract score from message: {msg}")
     return score
+
 
 def word_wrap(s: str, max_line_size: int = 100, prepend_tab: bool = True) -> str:
     words = s.split()
@@ -245,8 +246,10 @@ if __name__ == "__main__":
                         else "\tFailed, either crashed or refused to answer."
                     )
                     llm = get_default_llm()
-                    compare_prompt = f"Question: {sample['question']}\nExpected Answer: {sample['expected_answer']}\nActual Answer: {answer} \n Now make a short comparison between the expected and actual answers, thinkning out louad. Then output the score for the actual answer from 1 to 10. After you finish writing, output the score again, using format `score: 08`"
-                    msg = llm.invoke(prompt = compare_prompt, tools = None, tool_choice=None)
+                    compare_prompt = f"Question: {sample['question']}\nExpected Answer: {sample['expected_answer']}\nActual Answer: {answer} \n Now make a short comparison between the expected and actual answers, thinkning out louad. Then output the score for the actual answer from 1 to 10. After you finish writing, output the score again, using format `score: 08"  # noqa: E501
+                    msg = llm.invoke(
+                        prompt=compare_prompt, tools=None, tool_choice=None
+                    )
                     msg_content = str(msg.content)
                     score = extract_score(msg_content)
                     scores.append(score)

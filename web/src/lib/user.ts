@@ -4,7 +4,6 @@ export const checkUserIsNoAuthUser = (userId: string) => {
   return userId === "__no_auth_user__";
 };
 
-// should be used client-side only
 export const getCurrentUser = async (): Promise<User | null> => {
   const response = await fetch("/api/me", {
     credentials: "include",
@@ -32,6 +31,7 @@ export const basicLogin = async (
     ["username", email],
     ["password", password],
   ]);
+
   const response = await fetch("/api/auth/login", {
     method: "POST",
     credentials: "include",
@@ -43,7 +43,11 @@ export const basicLogin = async (
   return response;
 };
 
-export const basicSignup = async (email: string, password: string) => {
+export const basicSignup = async (
+  email: string,
+  password: string,
+  referralSource?: string
+) => {
   const response = await fetch("/api/auth/register", {
     method: "POST",
     credentials: "include",
@@ -54,6 +58,7 @@ export const basicSignup = async (email: string, password: string) => {
       email,
       username: email,
       password,
+      referral_source: referralSource,
     }),
   });
   return response;

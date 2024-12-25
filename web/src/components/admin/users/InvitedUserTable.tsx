@@ -1,47 +1,24 @@
 import { PopupSpec } from "@/components/admin/connectors/Popup";
-import { HidableSection } from "@/app/admin/assistants/HidableSection";
 import {
   Table,
   TableHead,
   TableRow,
-  TableHeaderCell,
   TableBody,
   TableCell,
-  Button,
-} from "@tremor/react";
-import userMutationFetcher from "@/lib/admin/users/userMutationFetcher";
+} from "@/components/ui/table";
+
 import CenteredPageSelector from "./CenteredPageSelector";
 import { type PageSelectorProps } from "@/components/PageSelector";
-import useSWR from "swr";
-import { type User, UserStatus } from "@/lib/types";
-import useSWRMutation from "swr/mutation";
+
+import { type User } from "@/lib/types";
+import { TableHeader } from "@/components/ui/table";
+import { InviteUserButton } from "./buttons/InviteUserButton";
 
 interface Props {
   users: Array<User>;
   setPopup: (spec: PopupSpec) => void;
   mutate: () => void;
 }
-
-const RemoveUserButton = ({
-  user,
-  onSuccess,
-  onError,
-}: {
-  user: User;
-  onSuccess: () => void;
-  onError: (message: string) => void;
-}) => {
-  const { trigger } = useSWRMutation(
-    "/api/manage/admin/remove-invited-user",
-    userMutationFetcher,
-    { onSuccess, onError }
-  );
-  return (
-    <Button onClick={() => trigger({ user_email: user.email })}>
-      Uninivite User
-    </Button>
-  );
-};
 
 const InvitedUserTable = ({
   users,
@@ -53,41 +30,28 @@ const InvitedUserTable = ({
 }: Props & PageSelectorProps) => {
   if (!users.length) return null;
 
-  const onRemovalSuccess = () => {
-    mutate();
-    setPopup({
-      message: "User uninvited!",
-      type: "success",
-    });
-  };
-  const onRemovalError = (errorMsg: string) => {
-    setPopup({
-      message: `Unable to uninvite user - ${errorMsg}`,
-      type: "error",
-    });
-  };
-
   return (
     <>
       <Table className="overflow-visible">
-        <TableHead>
+        <TableHeader>
           <TableRow>
-            <TableHeaderCell>Email</TableHeaderCell>
-            <TableHeaderCell>
+            <TableHead>Email</TableHead>
+            <TableHead>
               <div className="flex justify-end">Actions</div>
-            </TableHeaderCell>
+            </TableHead>
           </TableRow>
-        </TableHead>
+        </TableHeader>
         <TableBody>
           {users.map((user) => (
             <TableRow key={user.email}>
               <TableCell>{user.email}</TableCell>
               <TableCell>
                 <div className="flex justify-end">
-                  <RemoveUserButton
+                  <InviteUserButton
                     user={user}
-                    onSuccess={onRemovalSuccess}
-                    onError={onRemovalError}
+                    invited={true}
+                    setPopup={setPopup}
+                    mutate={mutate}
                   />
                 </div>
               </TableCell>

@@ -3,7 +3,6 @@ import { DocumentSet, MinimalUserSnapshot } from "@/lib/types";
 
 export interface StarterMessage {
   name: string;
-  description: string | null;
   message: string;
 }
 
@@ -21,12 +20,12 @@ export interface Prompt {
 export interface Persona {
   id: number;
   name: string;
+  search_start_date: Date | null;
   owner: MinimalUserSnapshot | null;
   is_visible: boolean;
   is_public: boolean;
   display_priority: number | null;
   description: string;
-  custom_code: string | null;
   document_sets: DocumentSet[];
   prompts: Prompt[];
   tools: ToolSnapshot[];
@@ -36,7 +35,18 @@ export interface Persona {
   llm_model_provider_override?: string;
   llm_model_version_override?: string;
   starter_messages: StarterMessage[] | null;
-  default_persona: boolean;
+  builtin_persona: boolean;
+  is_default_persona: boolean;
   users: MinimalUserSnapshot[];
   groups: number[];
+  icon_shape?: number;
+  icon_color?: string;
+  uploaded_image_id?: string;
+  category_id?: number | null;
+}
+
+export interface PersonaCategory {
+  id: number;
+  name: string;
+  description: string;
 }

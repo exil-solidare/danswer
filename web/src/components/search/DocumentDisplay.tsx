@@ -1,18 +1,35 @@
-import { DanswerDocument } from "@/lib/search/interfaces";
+"use client";
+import React from "react";
+import {
+  OnyxDocument,
+  DocumentRelevance,
+  LoadedOnyxDocument,
+  SearchOnyxDocument,
+} from "@/lib/search/interfaces";
 import { DocumentFeedbackBlock } from "./DocumentFeedbackBlock";
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { PopupSpec } from "../admin/connectors/Popup";
-import { HoverPopup } from "@/components/HoverPopup";
 import { DocumentUpdatedAtBadge } from "./DocumentUpdatedAtBadge";
-import { FiInfo, FiRadio, FiTag } from "react-icons/fi";
 import { SourceIcon } from "../SourceIcon";
 import { MetadataBadge } from "../MetadataBadge";
+import { BookIcon, GlobeIcon, LightBulbIcon, SearchIcon } from "../icons/icons";
+
+import { FaStar } from "react-icons/fa";
+import { FiTag } from "react-icons/fi";
+import { SettingsContext } from "../settings/SettingsProvider";
+import { CustomTooltip, TooltipGroup } from "../tooltip/CustomTooltip";
+import { WarningCircle } from "@phosphor-icons/react";
+import TextView from "../chat_search/TextView";
+import { SearchResultIcon } from "../SearchResultIcon";
+import { ValidSources } from "@/lib/types";
+import { openDocument } from "@/lib/search/utils";
 
 export const buildDocumentSummaryDisplay = (
   matchHighlights: string[],
   blurb: string
 ) => {
-  if (matchHighlights.length === 0) {
+  if (!matchHighlights || matchHighlights.length === 0) {
+    // console.log("no match highlights", matchHighlights);
     return blurb;
   }
 
@@ -54,6 +71,9 @@ export const buildDocumentSummaryDisplay = (
       sections.push(["...", false, false]);
     }
   });
+  if (sections.length == 0) {
+    return;
+  }
 
   let previousIsContinuation = sections[0][2];
   let previousIsBold = sections[0][1];
@@ -108,7 +128,7 @@ export const buildDocumentSummaryDisplay = (
 export function DocumentMetadataBlock({
   document,
 }: {
-  document: DanswerDocument;
+  document: OnyxDocument;
 }) {
   // don't display super long tags, as they are ugly
   const MAXIMUM_TAG_LENGTH = 40;
@@ -120,6 +140,7 @@ export function DocumentMetadataBlock({
           <DocumentUpdatedAtBadge updatedAt={document.updated_at} />
         </div>
       )}
+
       {Object.entries(document.metadata).length > 0 && (
         <>
           <div className="pl-1 border-l border-border" />
@@ -143,111 +164,303 @@ export function DocumentMetadataBlock({
 }
 
 interface DocumentDisplayProps {
-  document: DanswerDocument;
+  document: SearchOnyxDocument;
   messageId: number | null;
   documentRank: number;
   isSelected: boolean;
   setPopup: (popupSpec: PopupSpec | null) => void;
+  hide?: boolean;
+  index?: number;
+  contentEnriched?: boolean;
+  additional_relevance: DocumentRelevance | null;
 }
 
 export const DocumentDisplay = ({
   document,
-  messageId,
-  documentRank,
   isSelected,
+  additional_relevance,
+  messageId,
+  contentEnriched,
+  documentRank,
+  hide,
+  index,
   setPopup,
 }: DocumentDisplayProps) => {
   const [isHovered, setIsHovered] = useState(false);
+  const [alternativeToggled, setAlternativeToggled] = useState(false);
+  const relevance_explanation =
+    document.relevance_explanation ?? additional_relevance?.content;
+  const settings = useContext(SettingsContext);
+  const [presentingDocument, setPresentingDocument] =
+    useState<OnyxDocument | null>(null);
 
-  // Consider reintroducing null scored docs in the future
-  if (document.score === null) {
-    return null;
-  }
+  const handleViewFile = async () => {
+    setPresentingDocument(document);
+  };
 
   return (
     <div
       key={document.semantic_identifier}
-      className="text-sm border-b border-border mb-3"
-      onMouseEnter={() => {
-        setIsHovered(true);
-      }}
+      className={`text-sm mobile:ml-4 border-b border-border transition-all duration-500 
+        ${hide ? "transform translate-x-full opacity-0" : ""} 
+        ${!hide ? "pt-3" : "border-transparent"} relative`}
+      onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      style={{
+        transitionDelay: `${index! * 10}ms`, // Add a delay to the transition based on index
+      }}
     >
-      <div className="flex relative">
-        {document.score !== null && (
-          <div
-            className={
-              "absolute top-2/4 -translate-y-2/4 flex " +
-              (isSelected ? "-left-14 w-14" : "-left-10 w-10")
-            }
-          >
-            {isSelected && (
-              <div className="w-4 h-4 my-auto mr-1 flex flex-col">
-                <HoverPopup
-                  mainContent={<FiRadio className="text-gray-500 my-auto" />}
-                  popupContent={
-                    <div className="text-xs text-gray-300 w-36 flex">
-                      <div className="flex mx-auto">
-                        <div className="w-3 h-3 flex flex-col my-auto mr-1">
-                          <FiInfo className="my-auto" />
-                        </div>
-                        <div className="my-auto">The AI liked this doc!</div>
-                      </div>
-                    </div>
-                  }
-                  direction="bottom"
-                  style="dark"
-                />
-              </div>
-            )}
-            <div
-              className={`
-                text-xs
-                text-emphasis
-                bg-hover
-                rounded
-                p-0.5
-                w-fit
-                my-auto
-                select-none
-                ml-auto
-                mr-2`}
-            >
-              {Math.abs(document.score).toFixed(2)}
-            </div>
-          </div>
+      <div
+        className={`absolute top-6 overflow-y-auto -translate-y-2/4 flex ${
+          isSelected ? "-left-14 w-14" : "-left-10 w-10"
+        }`}
+      >
+        {!hide && (document.is_relevant || additional_relevance?.relevant) && (
+          <FaStar
+            size={16}
+            className="h-full text-xs text-star-indicator rounded w-fit my-auto select-none ml-auto mr-2"
+          />
         )}
-        <a
-          className={
-            "rounded-lg flex font-bold text-link max-w-full " +
-            (document.link ? "" : "pointer-events-none")
-          }
-          href={document.link}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <SourceIcon sourceType={document.source_type} iconSize={22} />
-          <p className="truncate text-wrap break-all ml-2 my-auto text-base max-w-full">
-            {document.semantic_identifier || document.document_id}
-          </p>
-        </a>
-        <div className="ml-auto">
-          {isHovered && messageId && (
-            <DocumentFeedbackBlock
-              documentId={document.document_id}
-              messageId={messageId}
-              documentRank={documentRank}
-              setPopup={setPopup}
-            />
-          )}
+      </div>
+      <div
+        className={`collapsible ${
+          hide ? "collapsible-closed overflow-y-auto border-transparent" : ""
+        }`}
+      >
+        <div className="flex relative">
+          <button
+            type="button"
+            className={`rounded-lg flex font-bold text-link max-w-full`}
+            onClick={() => {
+              if (document.link) {
+                window.open(document.link, "_blank");
+              } else {
+                handleViewFile();
+              }
+            }}
+          >
+            <SourceIcon sourceType={document.source_type} iconSize={22} />
+            <p className="truncate text-wrap break-all ml-2 my-auto line-clamp-1 text-base max-w-full">
+              {document.semantic_identifier || document.document_id}
+            </p>
+          </button>
+          <div className="ml-auto flex items-center">
+            <TooltipGroup>
+              {isHovered && messageId && (
+                <DocumentFeedbackBlock
+                  documentId={document.document_id}
+                  messageId={messageId}
+                  documentRank={documentRank}
+                  setPopup={setPopup}
+                />
+              )}
+              {(contentEnriched || additional_relevance) &&
+                relevance_explanation &&
+                (isHovered || alternativeToggled || settings?.isMobile) && (
+                  <button
+                    onClick={() =>
+                      setAlternativeToggled(
+                        (alternativeToggled) => !alternativeToggled
+                      )
+                    }
+                  >
+                    <CustomTooltip showTick line content="Toggle content">
+                      <LightBulbIcon
+                        className={`${
+                          settings?.isMobile && alternativeToggled
+                            ? "text-green-600"
+                            : "text-blue-600"
+                        } my-auto ml-2 h-4 w-4 cursor-pointer`}
+                      />
+                    </CustomTooltip>
+                  </button>
+                )}
+            </TooltipGroup>
+          </div>
         </div>
+        <div className="mt-1">
+          <DocumentMetadataBlock document={document} />
+        </div>
+
+        {presentingDocument && (
+          <TextView
+            presentingDocument={presentingDocument}
+            onClose={() => setPresentingDocument(null)}
+          />
+        )}
+
+        <p
+          style={{ transition: "height 0.30s ease-in-out" }}
+          className="pl-1 pt-2 pb-3 break-words text-wrap"
+        >
+          {alternativeToggled && (contentEnriched || additional_relevance)
+            ? relevance_explanation
+            : buildDocumentSummaryDisplay(
+                document.match_highlights,
+                document.blurb
+              )}
+        </p>
       </div>
-      <div className="mt-1">
-        <DocumentMetadataBlock document={document} />
-      </div>
-      <p className="pl-1 pt-2 pb-3 break-words">
-        {buildDocumentSummaryDisplay(document.match_highlights, document.blurb)}
-      </p>
     </div>
   );
 };
+
+export const AgenticDocumentDisplay = ({
+  document,
+  contentEnriched,
+  additional_relevance,
+  messageId,
+  documentRank,
+  index,
+  hide,
+  setPopup,
+}: DocumentDisplayProps) => {
+  const [isHovered, setIsHovered] = useState(false);
+  const [presentingDocument, setPresentingDocument] =
+    useState<OnyxDocument | null>(null);
+
+  const [alternativeToggled, setAlternativeToggled] = useState(false);
+
+  const relevance_explanation =
+    document.relevance_explanation ?? additional_relevance?.content;
+
+  return (
+    <div
+      key={document.semantic_identifier}
+      className={`text-sm mobile:ml-4 border-b border-border transition-all duration-500
+      ${!hide ? "transform translate-x-full opacity-0" : ""} 
+      ${hide ? "py-3" : "border-transparent"} relative`}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      style={{
+        transitionDelay: `${index! * 10}ms`,
+      }}
+    >
+      <div
+        className={`collapsible ${
+          !hide && "collapsible-closed overflow-y-auto border-transparent"
+        }`}
+      >
+        <div className="flex relative">
+          <button
+            type="button"
+            className={`rounded-lg flex font-bold text-link max-w-full ${
+              document.link ? "" : "pointer-events-none"
+            }`}
+            onClick={() => {
+              if (document.link) {
+                window.open(document.link, "_blank");
+              } else {
+                setPresentingDocument(document);
+              }
+            }}
+          >
+            <SourceIcon sourceType={document.source_type} iconSize={22} />
+            <p className="truncate text-wrap break-all ml-2 my-auto line-clamp-1 text-base max-w-full">
+              {document.semantic_identifier || document.document_id}
+            </p>
+          </button>
+
+          <div className="ml-auto items-center flex">
+            <TooltipGroup>
+              {isHovered && messageId && (
+                <DocumentFeedbackBlock
+                  documentId={document.document_id}
+                  messageId={messageId}
+                  documentRank={documentRank}
+                  setPopup={setPopup}
+                />
+              )}
+
+              {(contentEnriched || additional_relevance) &&
+                (isHovered || alternativeToggled) && (
+                  <button
+                    onClick={() =>
+                      setAlternativeToggled(
+                        (alternativeToggled) => !alternativeToggled
+                      )
+                    }
+                  >
+                    <CustomTooltip showTick line content="Toggle content">
+                      <BookIcon className="ml-2 my-auto text-blue-400" />
+                    </CustomTooltip>
+                  </button>
+                )}
+            </TooltipGroup>
+          </div>
+        </div>
+        <div className="mt-1">
+          <DocumentMetadataBlock document={document} />
+        </div>
+        {presentingDocument && (
+          <TextView
+            presentingDocument={presentingDocument}
+            onClose={() => setPresentingDocument(null)}
+          />
+        )}
+
+        <div className="pt-2 break-words flex gap-x-2">
+          <p
+            className="break-words text-wrap"
+            style={{ transition: "height 0.30s ease-in-out" }}
+          >
+            {alternativeToggled && (contentEnriched || additional_relevance)
+              ? buildDocumentSummaryDisplay(
+                  document.match_highlights,
+                  document.blurb
+                )
+              : relevance_explanation || (
+                  <span className="flex gap-x-1 items-center">
+                    {" "}
+                    <WarningCircle />
+                    Model failed to produce an analysis of the document
+                  </span>
+                )}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export function CompactDocumentCard({
+  document,
+  icon,
+  url,
+  updatePresentingDocument,
+}: {
+  document: OnyxDocument;
+  icon?: React.ReactNode;
+  url?: string;
+  updatePresentingDocument: (document: OnyxDocument) => void;
+}) {
+  return (
+    <div
+      onClick={() => {
+        openDocument(document, updatePresentingDocument);
+      }}
+      className="max-w-[250px] cursor-pointer pb-0 pt-0 mt-0 flex gap-y-0  flex-col  content-start items-start gap-0 "
+    >
+      <div className="text-sm font-semibold flex  items-center gap-x-1 text-text-900 pt-0 mt-0 truncate w-full">
+        {icon}
+        {(document.semantic_identifier || document.document_id).slice(0, 40)}
+        {(document.semantic_identifier || document.document_id).length > 40 &&
+          "..."}
+      </div>
+      {document.blurb && (
+        <p className="text-xs mb-0 text-gray-600 line-clamp-2">
+          {document.blurb}
+        </p>
+      )}
+      {document.updated_at && (
+        <div className=" flex mt-0 pt-0 items-center justify-between w-full ">
+          {!isNaN(new Date(document.updated_at).getTime()) && (
+            <span className="text-xs text-gray-500">
+              Updated {new Date(document.updated_at).toLocaleDateString()}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

@@ -2,11 +2,11 @@
 
 import { HealthCheckBanner } from "@/components/health/healthcheck";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import Image from "next/image";
-import { Text } from "@tremor/react";
+import { useCallback, useEffect, useState } from "react";
+import Text from "@/components/ui/text";
 import { RequestNewVerificationEmail } from "../waiting-on-verification/RequestNewVerificationEmail";
 import { User } from "@/lib/types";
+import { Logo } from "@/components/logo/Logo";
 
 export function Verify({ user }: { user: User | null }) {
   const searchParams = useSearchParams();
@@ -14,7 +14,7 @@ export function Verify({ user }: { user: User | null }) {
 
   const [error, setError] = useState("");
 
-  async function verify() {
+  const verify = useCallback(async () => {
     const token = searchParams.get("token");
     if (!token) {
       setError(
@@ -32,18 +32,21 @@ export function Verify({ user }: { user: User | null }) {
     });
 
     if (response.ok) {
-      router.push("/");
+      // Use window.location.href to force a full page reload,
+      // ensuring app re-initializes with the new state (including
+      // server-side provider values)
+      window.location.href = "/";
     } else {
       const errorDetail = (await response.json()).detail;
       setError(
         `Failed to verify your email - ${errorDetail}. Please try requesting a new verification email.`
       );
     }
-  }
+  }, [searchParams, router]);
 
   useEffect(() => {
     verify();
-  }, []);
+  }, [verify]);
 
   return (
     <main>
@@ -52,9 +55,11 @@ export function Verify({ user }: { user: User | null }) {
       </div>
       <div className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
         <div>
-          <div className="h-16 w-16 mx-auto animate-pulse">
-            <Image src="/logo.png" alt="Logo" width="1419" height="1520" />
-          </div>
+          <Logo
+            height={64}
+            width={64}
+            className="mx-auto w-fit animate-pulse"
+          />
 
           {!error ? (
             <Text className="mt-2">Verifying your email...</Text>

@@ -2,12 +2,13 @@
 
 import { PopupSpec, usePopup } from "@/components/admin/connectors/Popup";
 import { runConnector } from "@/lib/connector";
-import { Button, Divider, Text } from "@tremor/react";
-import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import Text from "@/components/ui/text";
 import { mutate } from "swr";
 import { buildCCPairInfoUrl } from "./lib";
 import { useState } from "react";
 import { Modal } from "@/components/Modal";
+import { Separator } from "@/components/ui/separator";
 
 function ReIndexPopup({
   connectorId,
@@ -46,9 +47,8 @@ function ReIndexPopup({
     <Modal title="Run Indexing" onOutsideClick={hide}>
       <div>
         <Button
+          variant="submit"
           className="ml-auto"
-          color="green"
-          size="xs"
           onClick={() => {
             triggerIndexing(false);
             hide();
@@ -62,12 +62,11 @@ function ReIndexPopup({
           have been added since the last successful indexing run.
         </Text>
 
-        <Divider />
+        <Separator />
 
         <Button
+          variant="submit"
           className="ml-auto"
-          color="green"
-          size="xs"
           onClick={() => {
             triggerIndexing(true);
             hide();
@@ -95,11 +94,15 @@ export function ReIndexButton({
   connectorId,
   credentialId,
   isDisabled,
+  isIndexing,
+  isDeleting,
 }: {
   ccPairId: number;
   connectorId: number;
   credentialId: number;
   isDisabled: boolean;
+  isIndexing: boolean;
+  isDeleting: boolean;
 }) {
   const { popup, setPopup } = usePopup();
   const [reIndexPopupVisible, setReIndexPopupVisible] = useState(false);
@@ -117,20 +120,23 @@ export function ReIndexButton({
       )}
       {popup}
       <Button
-        className="ml-auto"
-        color="green"
-        size="xs"
+        variant="success-reverse"
+        className="ml-auto min-w-[100px]"
         onClick={() => {
           setReIndexPopupVisible(true);
         }}
-        disabled={isDisabled}
+        disabled={isDisabled || isDeleting}
         tooltip={
-          isDisabled
-            ? "Connector must be active in order to run indexing"
-            : undefined
+          isDeleting
+            ? "Cannot index while connector is deleting"
+            : isIndexing
+              ? "Indexing is already in progress"
+              : isDisabled
+                ? "Connector must be re-enabled before indexing"
+                : undefined
         }
       >
-        Run Indexing
+        Index
       </Button>
     </>
   );
