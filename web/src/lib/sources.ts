@@ -36,9 +36,11 @@ import {
   GoogleStorageIcon,
   ColorSlackIcon,
   XenforoIcon,
+  ColorDiscordIcon,
   FreshdeskIcon,
   FirefliesIcon,
   EgnyteIcon,
+  AirtableIcon,
 } from "@/components/icons/icons";
 import { ValidSources } from "./types";
 import {
@@ -78,6 +80,12 @@ export const SOURCE_METADATA_MAP: SourceMap = {
     category: SourceCategory.Messaging,
     docs: "https://docs.onyx.app/connectors/slack",
     oauthSupported: true,
+  },
+  discord: {
+    icon: ColorDiscordIcon,
+    displayName: "Discord",
+    category: SourceCategory.Messaging,
+    docs: "https://docs.onyx.app/connectors/discord",
   },
   gmail: {
     icon: GmailIcon,
@@ -299,18 +307,24 @@ export const SOURCE_METADATA_MAP: SourceMap = {
     category: SourceCategory.Other,
     docs: "https://docs.onyx.app/connectors/fireflies",
   },
+  egnyte: {
+    icon: EgnyteIcon,
+    displayName: "Egnyte",
+    category: SourceCategory.Storage,
+    docs: "https://docs.onyx.app/connectors/egnyte",
+  },
+  airtable: {
+    icon: AirtableIcon,
+    displayName: "Airtable",
+    category: SourceCategory.Other,
+    docs: "https://docs.onyx.app/connectors/airtable",
+  },
   // currently used for the Internet Search tool docs, which is why
   // a globe is used
   not_applicable: {
     icon: GlobeIcon,
     displayName: "Not Applicable",
     category: SourceCategory.Other,
-  },
-  egnyte: {
-    icon: EgnyteIcon,
-    displayName: "Egnyte",
-    category: SourceCategory.Storage,
-    docs: "https://docs.onyx.app/connectors/egnyte",
   },
 } as SourceMap;
 

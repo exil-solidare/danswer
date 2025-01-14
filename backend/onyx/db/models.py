@@ -18,6 +18,7 @@ from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyBaseAccessTokenTa
 from fastapi_users_db_sqlalchemy.generics import TIMESTAMPAware
 from sqlalchemy import Boolean
 from sqlalchemy import DateTime
+from sqlalchemy import desc
 from sqlalchemy import Enum
 from sqlalchemy import Float
 from sqlalchemy import ForeignKey
@@ -43,7 +44,7 @@ from onyx.configs.constants import DEFAULT_BOOST, MilestoneRecordType
 from onyx.configs.constants import DocumentSource
 from onyx.configs.constants import FileOrigin
 from onyx.configs.constants import MessageType
-from onyx.db.enums import AccessType, IndexingMode
+from onyx.db.enums import AccessType, IndexingMode, SyncType, SyncStatus
 from onyx.configs.constants import NotificationType
 from onyx.configs.constants import SearchFeedbackType
 from onyx.configs.constants import TokenRateLimitScope
@@ -54,6 +55,7 @@ from onyx.db.enums import IndexingStatus
 from onyx.db.enums import IndexModelStatus
 from onyx.db.enums import TaskStatus
 from onyx.db.pydantic_type import PydanticType
+from onyx.utils.logger import setup_logger
 from onyx.utils.special_types import JSON_ro
 from onyx.file_store.models import FileDescriptor
 from onyx.llm.override_models import LLMOverride
@@ -65,6 +67,8 @@ from onyx.utils.headers import HeaderItemDict
 from shared_configs.enums import EmbeddingProvider
 from shared_configs.enums import RerankerProvider
 
+logger = setup_logger()
+
 
 class Base(DeclarativeBase):
     __abstract__ = True
@@ -72,6 +76,8 @@ class Base(DeclarativeBase):
 
 class EncryptedString(TypeDecorator):
     impl = LargeBinary
+    # This type's behavior is fully deterministic and doesn't depend on any external factors.
+    cache_ok = True
 
     def process_bind_param(self, value: str | None, dialect: Dialect) -> bytes | None:
         if value is not None:
@@ -86,6 +92,8 @@ class EncryptedString(TypeDecorator):
 
 class EncryptedJson(TypeDecorator):
     impl = LargeBinary
+    # This type's behavior is fully deterministic and doesn't depend on any external factors.
+    cache_ok = True
 
     def process_bind_param(self, value: dict | None, dialect: Dialect) -> bytes | None:
         if value is not None:
@@ -99,6 +107,21 @@ class EncryptedJson(TypeDecorator):
         if value is not None:
             json_str = decrypt_bytes_to_string(value)
             return json.loads(json_str)
+        return value
+
+
+class NullFilteredString(TypeDecorator):
+    impl = String
+    # This type's behavior is fully deterministic and doesn't depend on any external factors.
+    cache_ok = True
+
+    def process_bind_param(self, value: str | None, dialect: Dialect) -> str | None:
+        if value is not None and "\x00" in value:
+            logger.warning(f"NUL characters found in value: {value}")
+            return value.replace("\x00", "")
+        return value
+
+    def process_result_value(self, value: str | None, dialect: Dialect) -> str | None:
         return value
 
 
@@ -451,16 +474,16 @@ class Document(Base):
 
     # this should correspond to the ID of the document
     # (as is passed around in Onyx)
-    id: Mapped[str] = mapped_column(String, primary_key=True)
+    id: Mapped[str] = mapped_column(NullFilteredString, primary_key=True)
     from_ingestion_api: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=True
     )
     # 0 for neutral, positive for mostly endorse, negative for mostly reject
     boost: Mapped[int] = mapped_column(Integer, default=DEFAULT_BOOST)
     hidden: Mapped[bool] = mapped_column(Boolean, default=False)
-    semantic_id: Mapped[str] = mapped_column(String)
+    semantic_id: Mapped[str] = mapped_column(NullFilteredString)
     # First Section's link
-    link: Mapped[str | None] = mapped_column(String, nullable=True)
+    link: Mapped[str | None] = mapped_column(NullFilteredString, nullable=True)
 
     # The updated time is also used as a measure of the last successful state of the doc
     # pulled from the source (to help skip reindexing already updated docs in case of
@@ -471,6 +494,10 @@ class Document(Base):
     doc_updated_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # Number of chunks in the document (in Vespa)
+    # Only null for documents indexed prior to this change
+    chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # last time any vespa relevant row metadata or the doc changed.
     # does not include last_synced
@@ -736,7 +763,7 @@ class IndexAttempt(Base):
     # the run once API
     from_beginning: Mapped[bool] = mapped_column(Boolean)
     status: Mapped[IndexingStatus] = mapped_column(
-        Enum(IndexingStatus, native_enum=False)
+        Enum(IndexingStatus, native_enum=False, index=True)
     )
     # The two below may be slightly out of sync if user switches Embedding Model
     new_docs_indexed: Mapped[int | None] = mapped_column(Integer, default=0)
@@ -755,6 +782,7 @@ class IndexAttempt(Base):
     time_created: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
+        index=True,
     )
     # when the actual indexing run began
     # NOTE: will use the api_server clock rather than DB server clock
@@ -786,6 +814,13 @@ class IndexAttempt(Base):
             "ix_index_attempt_latest_for_connector_credential_pair",
             "connector_credential_pair_id",
             "time_created",
+        ),
+        Index(
+            "ix_index_attempt_ccpair_search_settings_time_updated",
+            "connector_credential_pair_id",
+            "search_settings_id",
+            desc("time_updated"),
+            unique=False,
         ),
     )
 
@@ -844,6 +879,46 @@ class IndexAttemptError(Base):
             f"error_msg={self.error_msg!r})>"
             f"time_created={self.time_created!r}, "
         )
+
+
+class SyncRecord(Base):
+    """
+    Represents the status of a "sync" operation (e.g. document set, user group, deletion).
+
+    A "sync" operation is an operation which needs to update a set of documents within
+    Vespa, usually to match the state of Postgres.
+    """
+
+    __tablename__ = "sync_record"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # document set id, user group id, or deletion id
+    entity_id: Mapped[int] = mapped_column(Integer)
+
+    sync_type: Mapped[SyncType] = mapped_column(Enum(SyncType, native_enum=False))
+    sync_status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus, native_enum=False))
+
+    num_docs_synced: Mapped[int] = mapped_column(Integer, default=0)
+
+    sync_start_time: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True))
+    sync_end_time: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_sync_record_entity_id_sync_type_sync_start_time",
+            "entity_id",
+            "sync_type",
+            "sync_start_time",
+        ),
+        Index(
+            "ix_sync_record_entity_id_sync_type_sync_status",
+            "entity_id",
+            "sync_type",
+            "sync_status",
+        ),
+    )
 
 
 class DocumentByConnectorCredentialPair(Base):
@@ -1248,6 +1323,11 @@ class DocumentSet(Base):
     # If `False`, then the document set is not visible to users who are not explicitly
     # given access to it either via the `users` or `groups` relationships
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Last time a user updated this document set
+    time_last_modified_by_user: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
     connector_credential_pairs: Mapped[list[ConnectorCredentialPair]] = relationship(
         "ConnectorCredentialPair",
@@ -1728,6 +1808,11 @@ class UserGroup(Base):
         Boolean, nullable=False, default=False
     )
 
+    # Last time a user updated this user group
+    time_last_modified_by_user: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
     users: Mapped[list[User]] = relationship(
         "User",
         secondary=User__UserGroup.__table__,
@@ -1907,3 +1992,13 @@ class UserTenantMapping(Base):
 
     email: Mapped[str] = mapped_column(String, nullable=False, primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String, nullable=False)
+
+
+# This is a mapping from tenant IDs to anonymous user paths
+class TenantAnonymousUserPath(Base):
+    __tablename__ = "tenant_anonymous_user_path"
+
+    tenant_id: Mapped[str] = mapped_column(String, primary_key=True, nullable=False)
+    anonymous_user_path: Mapped[str] = mapped_column(
+        String, nullable=False, unique=True
+    )

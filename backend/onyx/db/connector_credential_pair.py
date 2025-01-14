@@ -7,8 +7,10 @@ from sqlalchemy import exists
 from sqlalchemy import Select
 from sqlalchemy import select
 from sqlalchemy.orm import aliased
+from sqlalchemy.orm import joinedload
 from sqlalchemy.orm import Session
 
+from onyx.configs.app_configs import DISABLE_AUTH
 from onyx.configs.constants import DocumentSource
 from onyx.db.connector import fetch_connector_by_id
 from onyx.db.credentials import fetch_credential_by_id
@@ -27,17 +29,17 @@ from onyx.server.models import StatusResponse
 from onyx.utils.logger import setup_logger
 from onyx.utils.variable_functionality import fetch_ee_implementation_or_noop
 
-
 logger = setup_logger()
 
 
 def _add_user_filters(
     stmt: Select, user: User | None, get_editable: bool = True
 ) -> Select:
-    # If user is None, assume the user is an admin or auth is disabled
-    if user is None or user.role == UserRole.ADMIN:
+    # If user is None and auth is disabled, assume the user is an admin
+    if (user is None and DISABLE_AUTH) or (user and user.role == UserRole.ADMIN):
         return stmt
 
+    stmt = stmt.distinct()
     UG__CCpair = aliased(UserGroup__ConnectorCredentialPair)
     User__UG = aliased(User__UserGroup)
 
@@ -61,6 +63,12 @@ def _add_user_filters(
     - if we are not editing, we show all cc_pairs in the groups the user is a curator
     for (as well as public cc_pairs)
     """
+
+    # If user is None, this is an anonymous user and we should only show public cc_pairs
+    if user is None:
+        where_clause = ConnectorCredentialPair.access_type == AccessType.PUBLIC
+        return stmt.where(where_clause)
+
     where_clause = User__UG.user_id == user.id
     if user.role == UserRole.CURATOR and get_editable:
         where_clause &= User__UG.is_curator == True  # noqa: E712
@@ -90,15 +98,22 @@ def get_connector_credential_pairs(
     user: User | None = None,
     get_editable: bool = True,
     ids: list[int] | None = None,
+    eager_load_connector: bool = False,
 ) -> list[ConnectorCredentialPair]:
     stmt = select(ConnectorCredentialPair).distinct()
+
+    if eager_load_connector:
+        stmt = stmt.options(joinedload(ConnectorCredentialPair.connector))
+
     stmt = _add_user_filters(stmt, user, get_editable)
+
     if not include_disabled:
         stmt = stmt.where(
             ConnectorCredentialPair.status == ConnectorCredentialPairStatus.ACTIVE
-        )  # noqa
+        )
     if ids:
         stmt = stmt.where(ConnectorCredentialPair.id.in_(ids))
+
     return list(db_session.scalars(stmt).all())
 
 
@@ -310,6 +325,9 @@ def associate_default_cc_pair(db_session: Session) -> None:
     if existing_association is not None:
         return
 
+    # DefaultCCPair has id 1 since it is the first CC pair created
+    # It is DEFAULT_CC_PAIR_ID, but can't set it explicitly because it messed with the
+    # auto-incrementing id
     association = ConnectorCredentialPair(
         connector_id=0,
         credential_id=0,
@@ -350,7 +368,12 @@ def add_credential_to_connector(
     last_successful_index_time: datetime | None = None,
 ) -> StatusResponse:
     connector = fetch_connector_by_id(connector_id, db_session)
-    credential = fetch_credential_by_id(credential_id, user, db_session)
+    credential = fetch_credential_by_id(
+        credential_id,
+        user,
+        db_session,
+        get_editable=False,
+    )
 
     if connector is None:
         raise HTTPException(status_code=404, detail="Connector does not exist")
@@ -427,7 +450,12 @@ def remove_credential_from_connector(
     db_session: Session,
 ) -> StatusResponse[int]:
     connector = fetch_connector_by_id(connector_id, db_session)
-    credential = fetch_credential_by_id(credential_id, user, db_session)
+    credential = fetch_credential_by_id(
+        credential_id,
+        user,
+        db_session,
+        get_editable=False,
+    )
 
     if connector is None:
         raise HTTPException(status_code=404, detail="Connector does not exist")

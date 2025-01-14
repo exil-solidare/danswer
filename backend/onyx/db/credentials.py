@@ -74,6 +74,7 @@ def _add_user_filters(
         # Basic users can only access credentials that are owned by them
         return stmt.where(Credential.user_id == user.id)
 
+    stmt = stmt.distinct()
     """
     THIS PART IS FOR CURATORS AND GLOBAL CURATORS
     Here we select cc_pairs by relation:
@@ -86,7 +87,7 @@ def _add_user_filters(
     """
     Filter Credentials by:
     - if the user is in the user_group that owns the Credential
-    - if the user is not a global_curator, they must also have a curator relationship
+    - if the user is a curator, they must also have a curator relationship
     to the user_group
     - if editing is being done, we also filter out Credentials that are owned by groups
     that the user isn't a curator for
@@ -97,6 +98,7 @@ def _add_user_filters(
     where_clause = User__UserGroup.user_id == user.id
     if user.role == UserRole.CURATOR:
         where_clause &= User__UserGroup.is_curator == True  # noqa: E712
+
     if get_editable:
         user_groups = select(User__UserGroup.user_group_id).where(
             User__UserGroup.user_id == user.id
@@ -152,10 +154,16 @@ def fetch_credential_by_id(
     user: User | None,
     db_session: Session,
     assume_admin: bool = False,
+    get_editable: bool = True,
 ) -> Credential | None:
     stmt = select(Credential).distinct()
     stmt = stmt.where(Credential.id == credential_id)
-    stmt = _add_user_filters(stmt, user, assume_admin=assume_admin)
+    stmt = _add_user_filters(
+        stmt=stmt,
+        user=user,
+        assume_admin=assume_admin,
+        get_editable=get_editable,
+    )
     result = db_session.execute(stmt)
     credential = result.scalar_one_or_none()
     return credential

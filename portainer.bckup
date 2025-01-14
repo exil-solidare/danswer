@@ -1,0 +1,153 @@
+version: '3.8'
+services:
+
+
+  traefik:
+    image: "traefik:v3.0"
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entryPoints.web.address=:80"
+
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    networks:
+      - default
+      - public_network
+
+  api_server:
+    image: alexbalandi/onyx-backend:es0.0.1
+    command: >
+      /bin/sh -c "alembic upgrade head &&
+      echo \"Starting Danswer Api Server\" &&
+      uvicorn danswer.main:app --host 0.0.0.0 --port 8080"
+    depends_on:
+      - relational_db
+      - index
+      - inference_model_server
+    environment:
+      - AUTH_TYPE
+      - POSTGRES_HOST=relational_db
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - VESPA_HOST=index
+      - MODEL_SERVER_HOST=${MODEL_SERVER_HOST:-inference_model_server}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=PathRegexp(`^/(api|openapi.json)(/.*)?$$`)"
+      - "traefik.http.routers.api.entrypoints=web"
+      - "traefik.http.routers.api.middlewares=strip-api"
+      - "traefik.http.middlewares.strip-api.stripprefix.prefixes=/api"
+      - "traefik.http.services.api.loadbalancer.server.port=8080"
+
+  background:
+    image: alexbalandi/onyx-backend:es0.0.1
+    command: /usr/bin/supervisord
+    depends_on:
+      - relational_db
+      - index
+      - inference_model_server
+      - indexing_model_server
+    environment:
+      - AUTH_TYPE
+      - POSTGRES_HOST=relational_db
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - VESPA_HOST=index
+      - MODEL_SERVER_HOST=${MODEL_SERVER_HOST:-inference_model_server}
+      - INDEXING_MODEL_SERVER_HOST=${INDEXING_MODEL_SERVER_HOST:-indexing_model_server}
+
+
+  web_server:
+    image: onyxdotapp/onyx-web-server:latest
+    depends_on:
+      - api_server
+    environment:
+      - INTERNAL_URL=http://api_server:8080
+      - WEB_DOMAIN
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.front.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.front.entrypoints=web"
+      - "traefik.http.services.front.loadbalancer.server.port=3000"
+
+
+  inference_model_server:
+    image: alexbalandi/onyx-model-server:es0.0.1-amd64
+    command: >
+      /bin/sh -c "if [ \"${DISABLE_MODEL_SERVER:-false}\" = \"True\" ]; then
+        echo 'Skipping service...';
+        exit 0;
+      else
+        exec uvicorn model_server.main:app --host 0.0.0.0 --port 9000;
+      fi"
+    environment:
+      - MIN_THREADS_ML_MODELS=${MIN_THREADS_ML_MODELS:-}
+      # Set to debug to get more fine-grained logs
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      # Not necessary, this is just to reduce download time during startup
+      - model_cache_huggingface:/root/.cache/huggingface/
+
+
+  indexing_model_server:
+    image: alexbalandi/onyx-model-server:es0.0.1-amd64
+    command: >
+      /bin/sh -c "if [ \"${DISABLE_MODEL_SERVER:-false}\" = \"True\" ]; then
+        echo 'Skipping service...';
+        exit 0;
+      else
+        exec uvicorn model_server.main:app --host 0.0.0.0 --port 9000;
+      fi"
+    environment:
+      - MIN_THREADS_ML_MODELS=${MIN_THREADS_ML_MODELS:-}
+      - INDEXING_ONLY=True
+      # Set to debug to get more fine-grained logs
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      # Not necessary, this is just to reduce download time during startup
+      - model_cache_huggingface:/root/.cache/huggingface/
+
+  relational_db:
+    image: postgres:15.2-alpine
+    # POSTGRES_USER and POSTGRES_PASSWORD should be set in .env file
+    volumes:
+      - db_volume:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_MAX_CONNECTIONS=100
+      # 5 minute timeouts (300000 milliseconds)
+      - POSTGRES_STATEMENT_TIMEOUT=300000
+      - POSTGRES_IDLE_IN_TRANSACTION_SESSION_TIMEOUT=300000
+      # Connection stability settings
+      - POSTGRES_TCP_KEEPALIVES=1
+      - POSTGRES_TCP_KEEPALIVE_IDLE=60
+      - POSTGRES_TCP_KEEPALIVE_INTERVAL=10
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter
+    environment:
+      - DATA_SOURCE_NAME=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@relational_db:5432/postgres?sslmode=disable
+    networks:
+      - monitoring
+      - default
+  # This container name cannot have an underscore in it due to Vespa expectations of the URL
+  index:
+    image: vespaengine/vespa:8.277.17
+    volumes:
+      - vespa_volume:/opt/vespa/var
+    networks:
+      - monitoring
+      - default
+
+volumes:
+  db_volume:
+  vespa_volume:
+  model_cache_huggingface:
+
+networks:
+  public_network:
+    external: true
+  monitoring:
+    external: true
