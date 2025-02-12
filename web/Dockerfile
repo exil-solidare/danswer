@@ -160,5 +160,5 @@ ENV NEXT_PUBLIC_FORGOT_PASSWORD_ENABLED=${NEXT_PUBLIC_FORGOT_PASSWORD_ENABLED}
 # If you want to run this without compose, specify the ports to 
 # expose via cli
 
-CMD ["node", "-e", "process.env.UV_TCP_IPV6ONLY=1; require('./server.js')"]
+CMD CMD ["node", "server.js"]
 
