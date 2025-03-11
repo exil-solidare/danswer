@@ -72,6 +72,12 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "info")
 # allow us to specify a custom timeout
 API_BASED_EMBEDDING_TIMEOUT = int(os.environ.get("API_BASED_EMBEDDING_TIMEOUT", "600"))
 
+# Local batch size for VertexAI embedding models currently calibrated for item size of 512 tokens
+# NOTE: increasing this value may lead to API errors due to token limit exhaustion per call.
+VERTEXAI_EMBEDDING_LOCAL_BATCH_SIZE = int(
+    os.environ.get("VERTEXAI_EMBEDDING_LOCAL_BATCH_SIZE", "25")
+)
+
 # Only used for OpenAI
 OPENAI_EMBEDDING_TIMEOUT = int(
     os.environ.get("OPENAI_EMBEDDING_TIMEOUT", API_BASED_EMBEDDING_TIMEOUT)
@@ -137,6 +143,7 @@ else:
 MULTI_TENANT = os.environ.get("MULTI_TENANT", "").lower() == "true"
 
 POSTGRES_DEFAULT_SCHEMA = os.environ.get("POSTGRES_DEFAULT_SCHEMA") or "public"
+DEFAULT_REDIS_PREFIX = os.environ.get("DEFAULT_REDIS_PREFIX") or "default"
 
 
 async def async_return_default_schema(*args: Any, **kwargs: Any) -> str:
@@ -203,12 +210,12 @@ SUPPORTED_EMBEDDING_MODELS = [
         index_name="danswer_chunk_text_embedding_3_small",
     ),
     SupportedEmbeddingModel(
-        name="google/text-embedding-004",
+        name="google/text-embedding-005",
         dim=768,
         index_name="danswer_chunk_google_text_embedding_004",
     ),
     SupportedEmbeddingModel(
-        name="google/text-embedding-004",
+        name="google/text-embedding-005",
         dim=768,
         index_name="danswer_chunk_text_embedding_004",
     ),

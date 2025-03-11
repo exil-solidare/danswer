@@ -7,9 +7,10 @@ from fastapi import Query
 from sqlalchemy.orm import Session
 
 from onyx.auth.users import current_admin_user
-from onyx.auth.users import current_chat_accesssible_user
+from onyx.auth.users import current_chat_accessible_user
 from onyx.db.engine import get_session
 from onyx.db.llm import fetch_existing_llm_providers
+from onyx.db.llm import fetch_existing_llm_providers_for_user
 from onyx.db.llm import fetch_provider
 from onyx.db.llm import remove_llm_provider
 from onyx.db.llm import update_default_provider
@@ -190,10 +191,12 @@ def set_provider_as_default(
 
 @basic_router.get("/provider")
 def list_llm_provider_basics(
-    user: User | None = Depends(current_chat_accesssible_user),
+    user: User | None = Depends(current_chat_accessible_user),
     db_session: Session = Depends(get_session),
 ) -> list[LLMProviderDescriptor]:
     return [
         LLMProviderDescriptor.from_model(llm_provider_model)
-        for llm_provider_model in fetch_existing_llm_providers(db_session, user)
+        for llm_provider_model in fetch_existing_llm_providers_for_user(
+            db_session, user
+        )
     ]

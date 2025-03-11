@@ -1,3 +1,5 @@
+from collections import OrderedDict
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -9,6 +11,7 @@ from onyx.chat.models import CitationInfo
 from onyx.chat.models import OnyxContexts
 from onyx.chat.models import PersonaOverrideConfig
 from onyx.chat.models import QADocsResponse
+from onyx.chat.models import SubQuestionIdentifier
 from onyx.chat.models import ThreadMessage
 from onyx.configs.constants import DocumentSource
 from onyx.context.search.enums import LLMEvaluationType
@@ -57,6 +60,9 @@ class BasicCreateChatMessageRequest(ChunkContext):
     # https://platform.openai.com/docs/guides/structured-outputs/introduction
     structured_response_format: dict | None = None
 
+    # If True, uses agentic search instead of basic search
+    use_agentic_search: bool = False
+
 
 class BasicCreateChatMessageWithHistoryRequest(ChunkContext):
     # Last element is the new query. All previous elements are historical context
@@ -71,6 +77,8 @@ class BasicCreateChatMessageWithHistoryRequest(ChunkContext):
     # only works if using an OpenAI model. See the following for more details:
     # https://platform.openai.com/docs/guides/structured-outputs/introduction
     structured_response_format: dict | None = None
+    # If True, uses agentic search instead of basic search
+    use_agentic_search: bool = False
 
 
 class SimpleDoc(BaseModel):
@@ -81,6 +89,64 @@ class SimpleDoc(BaseModel):
     match_highlights: list[str]
     source_type: DocumentSource
     metadata: dict | None
+
+
+class AgentSubQuestion(SubQuestionIdentifier):
+    sub_question: str
+    document_ids: list[str]
+
+
+class AgentAnswer(SubQuestionIdentifier):
+    answer: str
+    answer_type: Literal["agent_sub_answer", "agent_level_answer"]
+
+
+class AgentSubQuery(SubQuestionIdentifier):
+    sub_query: str
+    query_id: int
+
+    @staticmethod
+    def make_dict_by_level_and_question_index(
+        original_dict: dict[tuple[int, int, int], "AgentSubQuery"]
+    ) -> dict[int, dict[int, list["AgentSubQuery"]]]:
+        """Takes a dict of tuple(level, question num, query_id) to sub queries.
+
+        returns a dict of level to dict[question num to list of query_id's]
+        Ordering is asc for readability.
+        """
+        # In this function, when we sort int | None, we deliberately push None to the end
+
+        # map entries to the level_question_dict
+        level_question_dict: dict[int, dict[int, list["AgentSubQuery"]]] = {}
+        for k1, obj in original_dict.items():
+            level = k1[0]
+            question = k1[1]
+
+            if level not in level_question_dict:
+                level_question_dict[level] = {}
+
+            if question not in level_question_dict[level]:
+                level_question_dict[level][question] = []
+
+            level_question_dict[level][question].append(obj)
+
+        # sort each query_id list and question_index
+        for key1, obj1 in level_question_dict.items():
+            for key2, value2 in obj1.items():
+                # sort the query_id list of each question_index
+                level_question_dict[key1][key2] = sorted(
+                    value2, key=lambda o: o.query_id
+                )
+            # sort the question_index dict of level
+            level_question_dict[key1] = OrderedDict(
+                sorted(level_question_dict[key1].items(), key=lambda x: (x is None, x))
+            )
+
+        # sort the top dict of levels
+        sorted_dict = OrderedDict(
+            sorted(level_question_dict.items(), key=lambda x: (x is None, x))
+        )
+        return sorted_dict
 
 
 class ChatBasicResponse(BaseModel):
@@ -102,6 +168,12 @@ class ChatBasicResponse(BaseModel):
     simple_search_docs: list[SimpleDoc] | None = None
     llm_chunks_indices: list[int] | None = None
 
+    # agentic fields
+    agent_sub_questions: dict[int, list[AgentSubQuestion]] | None = None
+    agent_answers: dict[int, list[AgentAnswer]] | None = None
+    agent_sub_queries: dict[int, dict[int, list[AgentSubQuery]]] | None = None
+    agent_refined_answer_improvement: bool | None = None
+
 
 class OneShotQARequest(ChunkContext):
     # Supports simplier APIs that don't deal with chat histories or message edits
@@ -120,8 +192,11 @@ class OneShotQARequest(ChunkContext):
     # will also disable Thread-based Rewording if specified
     query_override: str | None = None
 
-    # If True, skips generative an AI response to the search query
+    # If True, skips generating an AI response to the search query
     skip_gen_ai_answer_generation: bool = False
+
+    # If True, uses agentic search instead of basic search
+    use_agentic_search: bool = False
 
     @model_validator(mode="after")
     def check_persona_fields(self) -> "OneShotQARequest":

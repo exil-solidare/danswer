@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { User } from "./types";
-import { buildUrl } from "./utilsSS";
+import { buildUrl, UrlBuilder } from "./utilsSS";
 import { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
 import { AuthType, NEXT_PUBLIC_CLOUD_ENABLED } from "./constants";
 
@@ -55,13 +55,12 @@ export const getAuthDisabledSS = async (): Promise<boolean> => {
 };
 
 const getOIDCAuthUrlSS = async (nextUrl: string | null): Promise<string> => {
-  const res = await fetch(
-    buildUrl(
-      `/auth/oidc/authorize${
-        nextUrl ? `?next=${encodeURIComponent(nextUrl)}` : ""
-      }`
-    )
-  );
+  const url = UrlBuilder.fromInternalUrl("/auth/oidc/authorize");
+  if (nextUrl) {
+    url.addParam("next", nextUrl);
+  }
+
+  const res = await fetch(url.toString());
   if (!res.ok) {
     throw new Error("Failed to fetch data");
   }
@@ -71,18 +70,16 @@ const getOIDCAuthUrlSS = async (nextUrl: string | null): Promise<string> => {
 };
 
 const getGoogleOAuthUrlSS = async (nextUrl: string | null): Promise<string> => {
-  const res = await fetch(
-    buildUrl(
-      `/auth/oauth/authorize${
-        nextUrl ? `?next=${encodeURIComponent(nextUrl)}` : ""
-      }`
-    ),
-    {
-      headers: {
-        cookie: processCookies(await cookies()),
-      },
-    }
-  );
+  const url = UrlBuilder.fromInternalUrl("/auth/oauth/authorize");
+  if (nextUrl) {
+    url.addParam("next", nextUrl);
+  }
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      cookie: processCookies(await cookies()),
+    },
+  });
   if (!res.ok) {
     throw new Error("Failed to fetch data");
   }
@@ -92,13 +89,12 @@ const getGoogleOAuthUrlSS = async (nextUrl: string | null): Promise<string> => {
 };
 
 const getSAMLAuthUrlSS = async (nextUrl: string | null): Promise<string> => {
-  const res = await fetch(
-    buildUrl(
-      `/auth/saml/authorize${
-        nextUrl ? `?next=${encodeURIComponent(nextUrl)}` : ""
-      }`
-    )
-  );
+  const url = UrlBuilder.fromInternalUrl("/auth/saml/authorize");
+  if (nextUrl) {
+    url.addParam("next", nextUrl);
+  }
+
+  const res = await fetch(url.toString());
   if (!res.ok) {
     throw new Error("Failed to fetch data");
   }
@@ -112,6 +108,7 @@ export const getAuthUrlSS = async (
   nextUrl: string | null
 ): Promise<string> => {
   // Returns the auth url for the given auth type
+
   switch (authType) {
     case "disabled":
       return "";
@@ -175,9 +172,11 @@ export const getCurrentUserSS = async (): Promise<User | null> => {
           .join("; "),
       },
     });
+
     if (!response.ok) {
       return null;
     }
+
     const user = await response.json();
     return user;
   } catch (e) {

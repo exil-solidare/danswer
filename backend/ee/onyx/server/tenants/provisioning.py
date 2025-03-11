@@ -4,6 +4,7 @@ import uuid
 
 import aiohttp  # Async HTTP client
 import httpx
+import requests
 from fastapi import HTTPException
 from fastapi import Request
 from sqlalchemy import select
@@ -14,6 +15,7 @@ from ee.onyx.configs.app_configs import COHERE_DEFAULT_API_KEY
 from ee.onyx.configs.app_configs import HUBSPOT_TRACKING_URL
 from ee.onyx.configs.app_configs import OPENAI_DEFAULT_API_KEY
 from ee.onyx.server.tenants.access import generate_data_plane_token
+from ee.onyx.server.tenants.models import TenantByDomainResponse
 from ee.onyx.server.tenants.models import TenantCreationPayload
 from ee.onyx.server.tenants.models import TenantDeletionPayload
 from ee.onyx.server.tenants.schema_management import create_schema_if_not_exists
@@ -24,6 +26,7 @@ from ee.onyx.server.tenants.user_mapping import get_tenant_id_for_email
 from ee.onyx.server.tenants.user_mapping import user_owns_a_tenant
 from onyx.auth.users import exceptions
 from onyx.configs.app_configs import CONTROL_PLANE_API_BASE_URL
+from onyx.configs.app_configs import DEV_MODE
 from onyx.configs.constants import MilestoneRecordType
 from onyx.db.engine import get_session_with_tenant
 from onyx.db.engine import get_sqlalchemy_engine
@@ -54,7 +57,11 @@ logger = logging.getLogger(__name__)
 async def get_or_provision_tenant(
     email: str, referral_source: str | None = None, request: Request | None = None
 ) -> str:
-    """Get existing tenant ID for an email or create a new tenant if none exists."""
+    """
+    Get existing tenant ID for an email or create a new tenant if none exists.
+    This function should only be called after we have verified we want this user's tenant to exist.
+    It returns the tenant ID associated with the email, creating a new tenant if necessary.
+    """
     if not MULTI_TENANT:
         return POSTGRES_DEFAULT_SCHEMA
 
@@ -85,7 +92,8 @@ async def create_tenant(email: str, referral_source: str | None = None) -> str:
         # Provision tenant on data plane
         await provision_tenant(tenant_id, email)
         # Notify control plane
-        await notify_control_plane(tenant_id, email, referral_source)
+        if not DEV_MODE:
+            await notify_control_plane(tenant_id, email, referral_source)
     except Exception as e:
         logger.error(f"Tenant provisioning failed: {e}")
         await rollback_tenant_provisioning(tenant_id)
@@ -102,21 +110,21 @@ async def provision_tenant(tenant_id: str, email: str) -> None:
             status_code=409, detail="User already belongs to an organization"
         )
 
-    logger.info(f"Provisioning tenant: {tenant_id}")
+    logger.debug(f"Provisioning tenant {tenant_id} for user {email}")
     token = None
 
     try:
         if not create_schema_if_not_exists(tenant_id):
-            logger.info(f"Created schema for tenant {tenant_id}")
+            logger.debug(f"Created schema for tenant {tenant_id}")
         else:
-            logger.info(f"Schema already exists for tenant {tenant_id}")
+            logger.debug(f"Schema already exists for tenant {tenant_id}")
 
         token = CURRENT_TENANT_ID_CONTEXTVAR.set(tenant_id)
 
         # Await the Alembic migrations
         await asyncio.to_thread(run_alembic_migrations, tenant_id)
 
-        with get_session_with_tenant(tenant_id) as db_session:
+        with get_session_with_tenant(tenant_id=tenant_id) as db_session:
             configure_default_api_keys(db_session)
 
             current_search_settings = (
@@ -132,7 +140,7 @@ async def provision_tenant(tenant_id: str, email: str) -> None:
 
         add_users_to_tenant([email], tenant_id)
 
-        with get_session_with_tenant(tenant_id) as db_session:
+        with get_session_with_tenant(tenant_id=tenant_id) as db_session:
             create_milestone_and_report(
                 user=None,
                 distinct_id=tenant_id,
@@ -198,33 +206,15 @@ async def rollback_tenant_provisioning(tenant_id: str) -> None:
 
 
 def configure_default_api_keys(db_session: Session) -> None:
-    if OPENAI_DEFAULT_API_KEY:
-        open_provider = LLMProviderUpsertRequest(
-            name="OpenAI",
-            provider=OPENAI_PROVIDER_NAME,
-            api_key=OPENAI_DEFAULT_API_KEY,
-            default_model_name="gpt-4",
-            fast_default_model_name="gpt-4o-mini",
-            model_names=OPEN_AI_MODEL_NAMES,
-        )
-        try:
-            full_provider = upsert_llm_provider(open_provider, db_session)
-            update_default_provider(full_provider.id, db_session)
-        except Exception as e:
-            logger.error(f"Failed to configure OpenAI provider: {e}")
-    else:
-        logger.error(
-            "OPENAI_DEFAULT_API_KEY not set, skipping OpenAI provider configuration"
-        )
-
     if ANTHROPIC_DEFAULT_API_KEY:
         anthropic_provider = LLMProviderUpsertRequest(
             name="Anthropic",
             provider=ANTHROPIC_PROVIDER_NAME,
             api_key=ANTHROPIC_DEFAULT_API_KEY,
-            default_model_name="claude-3-5-sonnet-20241022",
+            default_model_name="claude-3-7-sonnet-20250219",
             fast_default_model_name="claude-3-5-sonnet-20241022",
             model_names=ANTHROPIC_MODEL_NAMES,
+            display_model_names=["claude-3-5-sonnet-20241022"],
         )
         try:
             full_provider = upsert_llm_provider(anthropic_provider, db_session)
@@ -234,6 +224,26 @@ def configure_default_api_keys(db_session: Session) -> None:
     else:
         logger.error(
             "ANTHROPIC_DEFAULT_API_KEY not set, skipping Anthropic provider configuration"
+        )
+
+    if OPENAI_DEFAULT_API_KEY:
+        open_provider = LLMProviderUpsertRequest(
+            name="OpenAI",
+            provider=OPENAI_PROVIDER_NAME,
+            api_key=OPENAI_DEFAULT_API_KEY,
+            default_model_name="gpt-4o",
+            fast_default_model_name="gpt-4o-mini",
+            model_names=OPEN_AI_MODEL_NAMES,
+            display_model_names=["o1", "o3-mini", "gpt-4o", "gpt-4o-mini"],
+        )
+        try:
+            full_provider = upsert_llm_provider(open_provider, db_session)
+            update_default_provider(full_provider.id, db_session)
+        except Exception as e:
+            logger.error(f"Failed to configure OpenAI provider: {e}")
+    else:
+        logger.error(
+            "OPENAI_DEFAULT_API_KEY not set, skipping OpenAI provider configuration"
         )
 
     if COHERE_DEFAULT_API_KEY:
@@ -345,3 +355,47 @@ async def delete_user_from_control_plane(tenant_id: str, email: str) -> None:
                 raise Exception(
                     f"Failed to delete tenant on control plane: {error_text}"
                 )
+
+
+def get_tenant_by_domain_from_control_plane(
+    domain: str,
+    tenant_id: str,
+) -> TenantByDomainResponse | None:
+    """
+    Fetches tenant information from the control plane based on the email domain.
+
+    Args:
+        domain: The email domain to search for (e.g., "example.com")
+
+    Returns:
+        A dictionary containing tenant information if found, None otherwise
+    """
+    token = generate_data_plane_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.get(
+            f"{CONTROL_PLANE_API_BASE_URL}/tenant-by-domain",
+            headers=headers,
+            json={"domain": domain, "tenant_id": tenant_id},
+        )
+
+        if response.status_code != 200:
+            logger.error(f"Control plane tenant lookup failed: {response.text}")
+            return None
+
+        response_data = response.json()
+        if not response_data:
+            return None
+
+        return TenantByDomainResponse(
+            tenant_id=response_data.get("tenant_id"),
+            number_of_users=response_data.get("number_of_users"),
+            creator_email=response_data.get("creator_email"),
+        )
+    except Exception as e:
+        logger.error(f"Error fetching tenant by domain: {str(e)}")
+        return None

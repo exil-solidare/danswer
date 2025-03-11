@@ -36,6 +36,7 @@ services:
       - OPENID_CONFIG_URL=${OPENID_CONFIG_URL:-}
       - TRACK_EXTERNAL_IDP_EXPIRY=${TRACK_EXTERNAL_IDP_EXPIRY:-}
       - CORS_ALLOWED_ORIGIN=${CORS_ALLOWED_ORIGIN:-}
+      - INTEGRATION_TESTS_MODE=${INTEGRATION_TESTS_MODE:-}
       # Gen AI Settings
       - GEN_AI_MAX_TOKENS=${GEN_AI_MAX_TOKENS:-}
       - QA_TIMEOUT=${QA_TIMEOUT:-}
@@ -61,6 +62,7 @@ services:
       # Other services
       - POSTGRES_HOST=relational_db
       - POSTGRES_DEFAULT_SCHEMA=${POSTGRES_DEFAULT_SCHEMA:-}
+      - POSTGRES_USE_NULL_POOL=${POSTGRES_USE_NULL_POOL:-}
       - VESPA_HOST=index
       - REDIS_HOST=cache
       - WEB_DOMAIN=${WEB_DOMAIN:-} # For frontend redirect auth purpose
@@ -97,6 +99,9 @@ services:
       - LINEAR_CLIENT_ID=${LINEAR_CLIENT_ID:-}
       - LINEAR_CLIENT_SECRET=${LINEAR_CLIENT_SECRET:-}
 
+      # Demo purposes
+      - MOCK_CONNECTOR_FILE_PATH=${MOCK_CONNECTOR_FILE_PATH:-}
+
       # Analytics Configs
       - SENTRY_DSN=${SENTRY_DSN:-}
 
@@ -113,6 +118,7 @@ services:
       - API_KEY_HASH_ROUNDS=${API_KEY_HASH_ROUNDS:-}
       # Seeding configuration
       - USE_IAM_AUTH=${USE_IAM_AUTH:-}
+      - ONYX_QUERY_HISTORY_TYPE=${ONYX_QUERY_HISTORY_TYPE:-}
     # Uncomment the line below to use if IAM_AUTH is true and you are using iam auth for postgres
     # volumes:
     #   - ./bundle.pem:/app/bundle.pem:ro
@@ -171,6 +177,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
       - POSTGRES_DB=${POSTGRES_DB:-}
       - POSTGRES_DEFAULT_SCHEMA=${POSTGRES_DEFAULT_SCHEMA:-}
+      - POSTGRES_USE_NULL_POOL=${POSTGRES_USE_NULL_POOL:-}
       - VESPA_HOST=index
       - REDIS_HOST=cache
       - WEB_DOMAIN=${WEB_DOMAIN:-} # For frontend redirect auth purpose for OAuth2 connectors
@@ -247,6 +254,9 @@ services:
     #   - ./bundle.pem:/app/bundle.pem:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # optional, only for debugging purposes
+    volumes:
+      - log_store:/var/log/persisted-logs
     logging:
       driver: json-file
       options:
@@ -426,3 +436,4 @@ volumes:
 
   model_cache_huggingface:
   indexing_huggingface_model_cache:
+  log_store:  # for logs that we don't want to lose on container restarts

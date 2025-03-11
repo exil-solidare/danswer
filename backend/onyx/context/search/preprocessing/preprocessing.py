@@ -23,7 +23,6 @@ from onyx.context.search.preprocessing.access_filters import (
 from onyx.context.search.retrieval.search_runner import (
     remove_stop_words_and_punctuation,
 )
-from onyx.db.engine import CURRENT_TENANT_ID_CONTEXTVAR
 from onyx.db.models import User
 from onyx.db.search_settings import get_current_search_settings
 from onyx.llm.interfaces import LLM
@@ -35,6 +34,7 @@ from onyx.utils.threadpool_concurrency import FunctionCall
 from onyx.utils.threadpool_concurrency import run_functions_in_parallel
 from onyx.utils.timing import log_function_time
 from shared_configs.configs import MULTI_TENANT
+from shared_configs.contextvars import get_current_tenant_id
 
 
 logger = setup_logger()
@@ -50,11 +50,11 @@ def retrieval_preprocessing(
     search_request: SearchRequest,
     user: User | None,
     llm: LLM,
+    skip_query_analysis: bool,
     db_session: Session,
-    bypass_acl: bool = False,
-    skip_query_analysis: bool = False,
-    base_recency_decay: float = BASE_RECENCY_DECAY,
     favor_recent_decay_multiplier: float = FAVOR_RECENT_DECAY_MULTIPLIER,
+    base_recency_decay: float = BASE_RECENCY_DECAY,
+    bypass_acl: bool = False,
 ) -> SearchQuery:
     """Logic is as follows:
     Any global disables apply first
@@ -117,8 +117,12 @@ def retrieval_preprocessing(
         else None
     )
 
+    # Sometimes this is pre-computed in parallel with other heavy tasks to improve
+    # latency, and in that case we don't need to run the model again
     run_query_analysis = (
-        None if skip_query_analysis else FunctionCall(query_analysis, (query,), {})
+        None
+        if (skip_query_analysis or search_request.precomputed_is_keyword is not None)
+        else FunctionCall(query_analysis, (query,), {})
     )
 
     functions_to_run = [
@@ -143,11 +147,12 @@ def retrieval_preprocessing(
 
     # The extracted keywords right now are not very reliable, not using for now
     # Can maybe use for highlighting
-    is_keyword, extracted_keywords = (
-        parallel_results[run_query_analysis.result_id]
-        if run_query_analysis
-        else (None, None)
-    )
+    is_keyword, _extracted_keywords = False, None
+    if search_request.precomputed_is_keyword is not None:
+        is_keyword = search_request.precomputed_is_keyword
+        _extracted_keywords = search_request.precomputed_keywords
+    elif run_query_analysis:
+        is_keyword, _extracted_keywords = parallel_results[run_query_analysis.result_id]
 
     all_query_terms = query.split()
     processed_keywords = (
@@ -166,7 +171,7 @@ def retrieval_preprocessing(
         time_cutoff=time_filter or predicted_time_cutoff,
         tags=preset_filters.tags,  # Tags are never auto-extracted
         access_control_list=user_acl_filters,
-        tenant_id=CURRENT_TENANT_ID_CONTEXTVAR.get() if MULTI_TENANT else None,
+        tenant_id=get_current_tenant_id() if MULTI_TENANT else None,
     )
 
     llm_evaluation_type = LLMEvaluationType.BASIC
@@ -247,4 +252,5 @@ def retrieval_preprocessing(
         chunks_above=chunks_above,
         chunks_below=chunks_below,
         full_doc=search_request.full_doc,
+        precomputed_query_embedding=search_request.precomputed_query_embedding,
     )

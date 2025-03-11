@@ -4,33 +4,37 @@ import userMutationFetcher from "@/lib/admin/users/userMutationFetcher";
 import useSWRMutation from "swr/mutation";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
-import { DeleteEntityModal } from "@/components/modals/DeleteEntityModal";
+import { ConfirmEntityModal } from "@/components/modals/ConfirmEntityModal";
 import { useRouter } from "next/navigation";
 
 export const LeaveOrganizationButton = ({
   user,
   setPopup,
   mutate,
+  className,
+  children,
 }: {
   user: User;
   setPopup: (spec: PopupSpec) => void;
   mutate: () => void;
+  className?: string;
+  children?: React.ReactNode;
 }) => {
   const router = useRouter();
   const { trigger, isMutating } = useSWRMutation(
-    "/api/tenants/leave-organization",
+    "/api/tenants/leave-team",
     userMutationFetcher,
     {
       onSuccess: () => {
         mutate();
         setPopup({
-          message: "Successfully left the organization!",
+          message: "Successfully left the team!",
           type: "success",
         });
       },
       onError: (errorMsg) =>
         setPopup({
-          message: `Unable to leave organization - ${errorMsg}`,
+          message: `Unable to leave team - ${errorMsg}`,
           type: "error",
         }),
     }
@@ -46,24 +50,24 @@ export const LeaveOrganizationButton = ({
   return (
     <>
       {showLeaveModal && (
-        <DeleteEntityModal
-          deleteButtonText="Leave"
-          entityType="organization"
-          entityName="your organization"
+        <ConfirmEntityModal
+          variant="action"
+          actionButtonText="Leave"
+          entityType="team"
+          entityName="your team"
           onClose={() => setShowLeaveModal(false)}
           onSubmit={handleLeaveOrganization}
-          additionalDetails="You will lose access to all organization data and resources."
+          additionalDetails="You will lose access to all team data and resources."
         />
       )}
 
       <Button
-        className="w-min"
+        className={className}
         onClick={() => setShowLeaveModal(true)}
         disabled={isMutating}
-        size="sm"
-        variant="destructive"
+        variant="ghost"
       >
-        Leave Organization
+        {children}
       </Button>
     </>
   );

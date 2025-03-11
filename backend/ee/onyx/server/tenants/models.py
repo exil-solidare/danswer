@@ -1,7 +1,8 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
-from onyx.configs.constants import NotificationType
-from onyx.server.settings.models import GatingType
+from onyx.server.settings.models import ApplicationStatus
 
 
 class CheckoutSessionCreationRequest(BaseModel):
@@ -15,15 +16,24 @@ class CreateTenantRequest(BaseModel):
 
 class ProductGatingRequest(BaseModel):
     tenant_id: str
-    product_gating: GatingType
-    notification: NotificationType | None = None
+    application_status: ApplicationStatus
+
+
+class SubscriptionStatusResponse(BaseModel):
+    subscribed: bool
 
 
 class BillingInformation(BaseModel):
+    stripe_subscription_id: str
+    status: str
+    current_period_start: datetime
+    current_period_end: datetime
+    number_of_seats: int
+    cancel_at_period_end: bool
+    canceled_at: datetime | None
+    trial_start: datetime | None
+    trial_end: datetime | None
     seats: int
-    subscription_status: str
-    billing_start: str
-    billing_end: str
     payment_method_enabled: bool
 
 
@@ -48,3 +58,39 @@ class TenantDeletionPayload(BaseModel):
 
 class AnonymousUserPath(BaseModel):
     anonymous_user_path: str | None
+
+
+class ProductGatingResponse(BaseModel):
+    updated: bool
+    error: str | None
+
+
+class SubscriptionSessionResponse(BaseModel):
+    sessionId: str
+
+
+class TenantByDomainResponse(BaseModel):
+    tenant_id: str
+    number_of_users: int
+    creator_email: str
+
+
+class TenantByDomainRequest(BaseModel):
+    email: str
+
+
+class RequestInviteRequest(BaseModel):
+    tenant_id: str
+
+
+class RequestInviteResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class PendingUserSnapshot(BaseModel):
+    email: str
+
+
+class ApproveUserRequest(BaseModel):
+    email: str

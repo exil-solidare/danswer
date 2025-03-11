@@ -7,11 +7,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { ChevronDownIcon } from "./icons/icons";
+import { ChevronDownIcon, PlusIcon } from "./icons/icons";
 import { FiCheck, FiChevronDown } from "react-icons/fi";
 import { Popover } from "./popover/Popover";
-import { createPortal } from "react-dom";
-import { useDropdownPosition } from "@/lib/dropdown";
 
 export interface Option<T> {
   name: string;
@@ -35,16 +33,14 @@ function StandardDropdownOption<T>({
   return (
     <button
       onClick={() => handleSelect(option)}
-      className={`w-full text-left block px-4 py-2.5 text-sm hover:bg-gray-800 ${
-        index !== 0 ? " border-t-2 border-gray-600" : ""
+      className={`w-full text-left block px-4 py-2.5 text-sm bg-white dark:bg-neutral-800 hover:bg-background-50 ${
+        index !== 0 ? "border-t border-background-200" : ""
       }`}
       role="menuitem"
     >
-      <p className="font-medium">{option.name}</p>
+      <p className="font-medium  text-xs text-text-900">{option.name}</p>
       {option.description && (
-        <div>
-          <p className="text-xs text-gray-300">{option.description}</p>
-        </div>
+        <p className="text-xs text-text-500">{option.description}</p>
       )}
     </button>
   );
@@ -54,15 +50,22 @@ export function SearchMultiSelectDropdown({
   options,
   onSelect,
   itemComponent,
+  onCreate,
+  onDelete,
+  onSearchTermChange,
+  initialSearchTerm = "",
 }: {
   options: StringOrNumberOption[];
   onSelect: (selected: StringOrNumberOption) => void;
   itemComponent?: FC<{ option: StringOrNumberOption }>;
+  onCreate?: (name: string) => void;
+  onDelete?: (name: string) => void;
+  onSearchTermChange?: (term: string) => void;
+  initialSearchTerm?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(initialSearchTerm);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const dropdownMenuRef = useRef<HTMLDivElement>(null);
 
   const handleSelect = (option: StringOrNumberOption) => {
     onSelect(option);
@@ -78,9 +81,7 @@ export function SearchMultiSelectDropdown({
     const handleClickOutside = (event: MouseEvent) => {
       if (
         dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node) &&
-        dropdownMenuRef.current &&
-        !dropdownMenuRef.current.contains(event.target as Node)
+        !dropdownRef.current.contains(event.target as Node)
       ) {
         setIsOpen(false);
       }
@@ -92,7 +93,9 @@ export function SearchMultiSelectDropdown({
     };
   }, []);
 
-  useDropdownPosition({ isOpen, dropdownRef, dropdownMenuRef });
+  useEffect(() => {
+    setSearchTerm(initialSearchTerm);
+  }, [initialSearchTerm]);
 
   return (
     <div className="relative text-left w-full" ref={dropdownRef}>
@@ -110,85 +113,78 @@ export function SearchMultiSelectDropdown({
             }
           }}
           onFocus={() => setIsOpen(true)}
-          className={`inline-flex 
-            justify-between 
-            w-full 
-            px-4 
-            py-2 
-            text-sm 
-            bg-background
-            border
-            border-border
-            rounded-md 
-            shadow-sm 
-            `}
+          className="inline-flex justify-between w-full px-4 py-2 text-sm bg-white dark:bg-transparent text-text-800 border border-background-300 rounded-md shadow-sm"
         />
         <button
           type="button"
-          className={`absolute top-0 right-0 
-              text-sm 
-              h-full px-2 border-l border-border`}
+          className="absolute top-0 right-0 text-sm h-full px-2 border-l border-background-300"
           aria-expanded={isOpen}
           aria-haspopup="true"
           onClick={() => setIsOpen(!isOpen)}
         >
-          <ChevronDownIcon className="my-auto w-4 h-4" />
+          <ChevronDownIcon className="my-auto w-4 h-4 text-text-600" />
         </button>
       </div>
 
-      {isOpen &&
-        createPortal(
+      {isOpen && (
+        <div className="absolute z-10 mt-1 w-full rounded-md shadow-lg bg-white border border-background-300 max-h-60 overflow-y-auto">
           <div
-            ref={dropdownMenuRef}
-            className={`origin-top-right
-                rounded-md
-                shadow-lg
-                bg-background
-                border
-                border-border
-                max-h-80
-                overflow-y-auto
-                overscroll-contain`}
+            role="menu"
+            aria-orientation="vertical"
+            aria-labelledby="options-menu"
           >
-            <div
-              role="menu"
-              aria-orientation="vertical"
-              aria-labelledby="options-menu"
-            >
-              {filteredOptions.length ? (
-                filteredOptions.map((option, index) =>
-                  itemComponent ? (
-                    <div
-                      key={option.name}
-                      onClick={() => {
-                        handleSelect(option);
-                      }}
-                    >
-                      {itemComponent({ option })}
-                    </div>
-                  ) : (
-                    <StandardDropdownOption
-                      key={index}
-                      option={option}
-                      index={index}
-                      handleSelect={handleSelect}
-                    />
-                  )
-                )
-              ) : (
-                <button
-                  key={0}
-                  className={`w-full text-left block px-4 py-2.5 text-sm hover:bg-hover`}
-                  role="menuitem"
-                  onClick={() => setIsOpen(false)}
+            {filteredOptions.map((option, index) =>
+              itemComponent ? (
+                <div
+                  key={option.name}
+                  onClick={() => {
+                    handleSelect(option);
+                  }}
                 >
-                  No matches found...
-                </button>
+                  {itemComponent({ option })}
+                </div>
+              ) : (
+                <StandardDropdownOption
+                  key={index}
+                  option={option}
+                  index={index}
+                  handleSelect={handleSelect}
+                />
+              )
+            )}
+
+            {onCreate &&
+              searchTerm.trim() !== "" &&
+              !filteredOptions.some(
+                (option) =>
+                  option.name.toLowerCase() === searchTerm.toLowerCase()
+              ) && (
+                <>
+                  <div className="border-t border-background-300"></div>
+                  <button
+                    className="w-full text-left flex items-center px-4 py-2 text-sm text-text-800 hover:bg-background-100"
+                    role="menuitem"
+                    onClick={() => {
+                      onCreate(searchTerm);
+                      setIsOpen(false);
+                      setSearchTerm("");
+                    }}
+                  >
+                    <PlusIcon className="w-4 h-4 mr-2 text-text-600" />
+                    Create label &quot;{searchTerm}&quot;
+                  </button>
+                </>
               )}
-            </div>
-          </div>,
-          document.body
-        )}
+
+            {filteredOptions.length === 0 &&
+              (!onCreate || searchTerm.trim() === "") && (
+                <div className="px-4 py-2.5 text-sm text-text-500">
+                  No matches found
+                </div>
+              )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -267,7 +263,8 @@ export function DefaultDropdownElement({
         cursor-pointer 
         bg-transparent 
         rounded
-        hover:bg-hover
+        text-text-dark
+        hover:bg-accent-background-hovered
       `}
       onClick={onSelect}
     >
@@ -321,6 +318,11 @@ export const DefaultDropdown = forwardRef<HTMLDivElement, DefaultDropdownProps>(
     const selectedOption = options.find((option) => option.value === selected);
     const [isOpen, setIsOpen] = useState(false);
 
+    const handleSelect = (value: any) => {
+      onSelect(value);
+      setIsOpen(false);
+    };
+
     const Content = (
       <div
         className={`
@@ -362,9 +364,7 @@ export const DefaultDropdown = forwardRef<HTMLDivElement, DefaultDropdownProps>(
           <DefaultDropdownElement
             key={-1}
             name="Default"
-            onSelect={() => {
-              onSelect(null);
-            }}
+            onSelect={() => handleSelect(null)}
             isSelected={selected === null}
           />
         )}
@@ -375,7 +375,7 @@ export const DefaultDropdown = forwardRef<HTMLDivElement, DefaultDropdownProps>(
               key={option.value}
               name={option.name}
               description={option.description}
-              onSelect={() => onSelect(option.value)}
+              onSelect={() => handleSelect(option.value)}
               isSelected={isSelected}
               icon={option.icon}
             />
@@ -448,7 +448,7 @@ export function ControlledPopup({
             border-border 
             z-30 
             rounded 
-            text-emphasis 
+            text-text-darker 
             shadow-lg`}
           style={{ transform: "translateY(calc(-100% - 5px))" }}
         >

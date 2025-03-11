@@ -8,6 +8,9 @@ from typing import Any
 from typing import cast
 from typing import TypeVar
 
+import torch
+
+from model_server.constants import GPUStatus
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -58,3 +61,41 @@ def simple_log_function_time(
             return cast(F, wrapped_sync_func)
 
     return decorator
+
+
+def get_gpu_type() -> str:
+    if torch.cuda.is_available():
+        return GPUStatus.CUDA
+    if torch.backends.mps.is_available():
+        return GPUStatus.MAC_MPS
+
+    return GPUStatus.NONE
+
+
+def pass_aws_key(api_key: str) -> tuple[str, str, str]:
+    """Parse AWS API key string into components.
+
+    Args:
+        api_key: String in format 'aws_ACCESSKEY_SECRETKEY_REGION'
+
+    Returns:
+        Tuple of (access_key, secret_key, region)
+
+    Raises:
+        ValueError: If key format is invalid
+    """
+    if not api_key.startswith("aws"):
+        raise ValueError("API key must start with 'aws' prefix")
+
+    parts = api_key.split("_")
+    if len(parts) != 4:
+        raise ValueError(
+            f"API key must be in format 'aws_ACCESSKEY_SECRETKEY_REGION', got {len(parts) - 1} parts"
+            "this is an onyx specific format for formatting the aws secrets for bedrock"
+        )
+
+    try:
+        _, aws_access_key_id, aws_secret_access_key, aws_region = parts
+        return aws_access_key_id, aws_secret_access_key, aws_region
+    except Exception as e:
+        raise ValueError(f"Failed to parse AWS key components: {str(e)}")

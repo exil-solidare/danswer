@@ -55,12 +55,12 @@ export const FeedbackModal = ({
   return (
     <Modal onOutsideClick={onClose} width="w-full max-w-3xl">
       <>
-        <h2 className="text-2xl text-emphasis font-bold mb-4 flex">
+        <h2 className="text-2xl text-text-darker font-bold mb-4 flex">
           <div className="mr-1 my-auto">
             {feedbackType === "like" ? (
               <FilledLikeIcon
                 size={20}
-                className="text-green-500 my-auto mr-2"
+                className="text-green-600 my-auto mr-2"
               />
             ) : (
               <FilledLikeIcon
@@ -76,8 +76,8 @@ export const FeedbackModal = ({
           {predefinedFeedbackOptions.map((feedback, index) => (
             <button
               key={index}
-              className={`bg-border hover:bg-hover text-default py-2 px-4 rounded m-1 
-                ${predefinedFeedback === feedback && "ring-2 ring-accent"}`}
+              className={`bg-background-dark hover:bg-accent-background-hovered text-default py-2 px-4 rounded m-1 
+                ${predefinedFeedback === feedback && "ring-2 ring-accent/20"}`}
               onClick={() => handlePredefinedFeedback(feedback)}
             >
               {feedback}
@@ -109,7 +109,7 @@ export const FeedbackModal = ({
 
         <div className="flex mt-2">
           <button
-            className="bg-accent text-white py-2 px-4 rounded hover:bg-blue-600 focus:outline-none mx-auto"
+            className="bg-agent text-white py-2 px-4 rounded hover:bg-agent/50 focus:outline-none mx-auto"
             onClick={handleSubmit}
           >
             Submit feedback

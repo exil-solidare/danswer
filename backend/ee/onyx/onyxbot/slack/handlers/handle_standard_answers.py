@@ -22,7 +22,7 @@ from onyx.onyxbot.slack.blocks import get_restate_blocks
 from onyx.onyxbot.slack.constants import GENERATE_ANSWER_BUTTON_ACTION_ID
 from onyx.onyxbot.slack.handlers.utils import send_team_member_message
 from onyx.onyxbot.slack.models import SlackMessageInfo
-from onyx.onyxbot.slack.utils import respond_in_thread
+from onyx.onyxbot.slack.utils import respond_in_thread_or_channel
 from onyx.onyxbot.slack.utils import update_emote_react
 from onyx.utils.logger import OnyxLoggingAdapter
 from onyx.utils.logger import setup_logger
@@ -80,7 +80,7 @@ def oneoff_standard_answers(
 def _handle_standard_answers(
     message_info: SlackMessageInfo,
     receiver_ids: list[str] | None,
-    slack_channel_config: SlackChannelConfig | None,
+    slack_channel_config: SlackChannelConfig,
     prompt: Prompt | None,
     logger: OnyxLoggingAdapter,
     client: WebClient,
@@ -94,13 +94,10 @@ def _handle_standard_answers(
     Returns True if standard answers are found to match the user's message and therefore,
     we still need to respond to the users.
     """
-    # if no channel config, then no standard answers are configured
-    if not slack_channel_config:
-        return False
 
     slack_thread_id = message_info.thread_to_respond
     configured_standard_answer_categories = (
-        slack_channel_config.standard_answer_categories if slack_channel_config else []
+        slack_channel_config.standard_answer_categories
     )
     configured_standard_answers = set(
         [
@@ -150,9 +147,9 @@ def _handle_standard_answers(
             db_session=db_session,
             description="",
             user_id=None,
-            persona_id=slack_channel_config.persona.id
-            if slack_channel_config.persona
-            else 0,
+            persona_id=(
+                slack_channel_config.persona.id if slack_channel_config.persona else 0
+            ),
             onyxbot_flow=True,
             slack_thread_id=slack_thread_id,
         )
@@ -182,7 +179,7 @@ def _handle_standard_answers(
             formatted_answers.append(formatted_answer)
         answer_message = "\n\n".join(formatted_answers)
 
-        _ = create_new_chat_message(
+        chat_message = create_new_chat_message(
             chat_session_id=chat_session.id,
             parent_message=new_user_message,
             prompt_id=prompt.id if prompt else None,
@@ -191,8 +188,13 @@ def _handle_standard_answers(
             message_type=MessageType.ASSISTANT,
             error=None,
             db_session=db_session,
-            commit=True,
+            commit=False,
         )
+        # attach the standard answers to the chat message
+        chat_message.standard_answers = [
+            standard_answer for standard_answer, _ in matching_standard_answers
+        ]
+        db_session.commit()
 
         update_emote_react(
             emoji=DANSWER_REACT_EMOJI,
@@ -214,7 +216,7 @@ def _handle_standard_answers(
         all_blocks = restate_question_blocks + answer_blocks
 
         try:
-            respond_in_thread(
+            respond_in_thread_or_channel(
                 client=client,
                 channel=message_info.channel_to_respond,
                 receiver_ids=receiver_ids,
@@ -229,6 +231,7 @@ def _handle_standard_answers(
                     client=client,
                     channel=message_info.channel_to_respond,
                     thread_ts=slack_thread_id,
+                    receiver_ids=receiver_ids,
                 )
 
             return True

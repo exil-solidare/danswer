@@ -1,7 +1,9 @@
 import abc
 from collections.abc import Generator
 from typing import Any
+from typing import Generic
 from typing import TYPE_CHECKING
+from typing import TypeVar
 
 from onyx.llm.interfaces import LLM
 from onyx.llm.models import PreviousMessage
@@ -9,12 +11,15 @@ from onyx.utils.special_types import JSON_ro
 
 
 if TYPE_CHECKING:
-    from onyx.chat.prompt_builder.build import AnswerPromptBuilder
+    from onyx.chat.prompt_builder.answer_prompt_builder import AnswerPromptBuilder
     from onyx.tools.message import ToolCallSummary
     from onyx.tools.models import ToolResponse
 
 
-class Tool(abc.ABC):
+OVERRIDE_T = TypeVar("OVERRIDE_T")
+
+
+class Tool(abc.ABC, Generic[OVERRIDE_T]):
     @property
     @abc.abstractmethod
     def name(self) -> str:
@@ -57,7 +62,9 @@ class Tool(abc.ABC):
     """Actual execution of the tool"""
 
     @abc.abstractmethod
-    def run(self, **kwargs: Any) -> Generator["ToolResponse", None, None]:
+    def run(
+        self, override_kwargs: OVERRIDE_T | None = None, **llm_kwargs: Any
+    ) -> Generator["ToolResponse", None, None]:
         raise NotImplementedError
 
     @abc.abstractmethod

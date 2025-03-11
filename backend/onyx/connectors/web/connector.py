@@ -25,6 +25,10 @@ from onyx.configs.app_configs import WEB_CONNECTOR_OAUTH_CLIENT_SECRET
 from onyx.configs.app_configs import WEB_CONNECTOR_OAUTH_TOKEN_URL
 from onyx.configs.app_configs import WEB_CONNECTOR_VALIDATE_URLS
 from onyx.configs.constants import DocumentSource
+from onyx.connectors.exceptions import ConnectorValidationError
+from onyx.connectors.exceptions import CredentialExpiredError
+from onyx.connectors.exceptions import InsufficientPermissionsError
+from onyx.connectors.exceptions import UnexpectedValidationError
 from onyx.connectors.interfaces import GenerateDocumentsOutput
 from onyx.connectors.interfaces import LoadConnector
 from onyx.connectors.models import Document
@@ -36,6 +40,12 @@ from onyx.utils.sitemap import list_pages_for_site
 from shared_configs.configs import MULTI_TENANT
 
 logger = setup_logger()
+
+WEB_CONNECTOR_MAX_SCROLL_ATTEMPTS = 20
+# Threshold for determining when to replace vs append iframe content
+IFRAME_TEXT_LENGTH_THRESHOLD = 700
+# Message indicating JavaScript is disabled, which often appears when scraping fails
+JAVASCRIPT_DISABLED_MESSAGE = "You have JavaScript disabled in your browser"
 
 
 class WEB_CONNECTOR_VALID_SETTINGS(str, Enum):
@@ -132,7 +142,8 @@ def get_internal_links(
         # Account for malformed backslashes in URLs
         href = href.replace("\\", "/")
 
-        if should_ignore_pound and "#" in href:
+        # "#!" indicates the page is using a hashbang URL, which is a client-side routing technique
+        if should_ignore_pound and "#" in href and "#!" not in href:
             href = href.split("#")[0]
 
         if not is_valid_url(href):
@@ -146,6 +157,7 @@ def get_internal_links(
 
 def start_playwright() -> Tuple[Playwright, BrowserContext]:
     playwright = sync_playwright().start()
+
     browser = playwright.chromium.launch(headless=True)
 
     context = browser.new_context()
@@ -170,25 +182,34 @@ def start_playwright() -> Tuple[Playwright, BrowserContext]:
 
 
 def extract_urls_from_sitemap(sitemap_url: str) -> list[str]:
-    response = requests.get(sitemap_url)
-    response.raise_for_status()
+    try:
+        response = requests.get(sitemap_url)
+        response.raise_for_status()
 
-    soup = BeautifulSoup(response.content, "html.parser")
-    urls = [
-        _ensure_absolute_url(sitemap_url, loc_tag.text)
-        for loc_tag in soup.find_all("loc")
-    ]
+        soup = BeautifulSoup(response.content, "html.parser")
+        urls = [
+            _ensure_absolute_url(sitemap_url, loc_tag.text)
+            for loc_tag in soup.find_all("loc")
+        ]
 
-    if len(urls) == 0 and len(soup.find_all("urlset")) == 0:
-        # the given url doesn't look like a sitemap, let's try to find one
-        urls = list_pages_for_site(sitemap_url)
+        if len(urls) == 0 and len(soup.find_all("urlset")) == 0:
+            # the given url doesn't look like a sitemap, let's try to find one
+            urls = list_pages_for_site(sitemap_url)
 
-    if len(urls) == 0:
-        raise ValueError(
-            f"No URLs found in sitemap {sitemap_url}. Try using the 'single' or 'recursive' scraping options instead."
+        if len(urls) == 0:
+            raise ValueError(
+                f"No URLs found in sitemap {sitemap_url}. Try using the 'single' or 'recursive' scraping options instead."
+            )
+
+        return urls
+    except requests.RequestException as e:
+        raise RuntimeError(f"Failed to fetch sitemap from {sitemap_url}: {e}")
+    except ValueError as e:
+        raise RuntimeError(f"Error processing sitemap {sitemap_url}: {e}")
+    except Exception as e:
+        raise RuntimeError(
+            f"Unexpected error while processing sitemap {sitemap_url}: {e}"
         )
-
-    return urls
 
 
 def _ensure_absolute_url(source_url: str, maybe_relative_url: str) -> str:
@@ -225,10 +246,14 @@ class WebConnector(LoadConnector):
         web_connector_type: str = WEB_CONNECTOR_VALID_SETTINGS.RECURSIVE.value,
         mintlify_cleanup: bool = True,  # Mostly ok to apply to other websites as well
         batch_size: int = INDEX_BATCH_SIZE,
+        scroll_before_scraping: bool = False,
+        **kwargs: Any,
     ) -> None:
         self.mintlify_cleanup = mintlify_cleanup
         self.batch_size = batch_size
         self.recursive = False
+        self.scroll_before_scraping = scroll_before_scraping
+        self.web_connector_type = web_connector_type
 
         if web_connector_type == WEB_CONNECTOR_VALID_SETTINGS.RECURSIVE.value:
             self.recursive = True
@@ -269,6 +294,7 @@ class WebConnector(LoadConnector):
         and converts them into documents"""
         visited_links: set[str] = set()
         to_visit: list[str] = self.to_visit_list
+        content_hashes = set()
 
         if not to_visit:
             raise ValueError("No URLs to visit")
@@ -283,40 +309,41 @@ class WebConnector(LoadConnector):
         playwright, context = start_playwright()
         restart_playwright = False
         while to_visit:
-            current_url = to_visit.pop()
-            if current_url in visited_links:
+            initial_url = to_visit.pop()
+            if initial_url in visited_links:
                 continue
-            visited_links.add(current_url)
+            visited_links.add(initial_url)
 
             try:
-                protected_url_check(current_url)
+                protected_url_check(initial_url)
             except Exception as e:
-                last_error = f"Invalid URL {current_url} due to {e}"
+                last_error = f"Invalid URL {initial_url} due to {e}"
                 logger.warning(last_error)
                 continue
 
-            logger.info(f"Visiting {current_url}")
+            index = len(visited_links)
+            logger.info(f"{index}: Visiting {initial_url}")
 
             try:
-                check_internet_connection(current_url)
+                check_internet_connection(initial_url)
                 if restart_playwright:
                     playwright, context = start_playwright()
                     restart_playwright = False
 
-                if current_url.split(".")[-1] == "pdf":
+                if initial_url.split(".")[-1] == "pdf":
                     # PDF files are not checked for links
-                    response = requests.get(current_url)
-                    page_text, metadata = read_pdf_file(
+                    response = requests.get(initial_url)
+                    page_text, metadata, images = read_pdf_file(
                         file=io.BytesIO(response.content)
                     )
                     last_modified = response.headers.get("Last-Modified")
 
                     doc_batch.append(
                         Document(
-                            id=current_url,
-                            sections=[Section(link=current_url, text=page_text)],
+                            id=initial_url,
+                            sections=[Section(link=initial_url, text=page_text)],
                             source=DocumentSource.WEB,
-                            semantic_identifier=current_url.split("/")[-1],
+                            semantic_identifier=initial_url.split("/")[-1],
                             metadata=metadata,
                             doc_updated_at=_get_datetime_from_last_modified_header(
                                 last_modified
@@ -328,46 +355,98 @@ class WebConnector(LoadConnector):
                     continue
 
                 page = context.new_page()
-                page_response = page.goto(current_url)
+
+                # Can't use wait_until="networkidle" because it interferes with the scrolling behavior
+                page_response = page.goto(
+                    initial_url,
+                    timeout=30000,  # 30 seconds
+                )
+
                 last_modified = (
                     page_response.header_value("Last-Modified")
                     if page_response
                     else None
                 )
-                final_page = page.url
-                if final_page != current_url:
-                    logger.info(f"Redirected to {final_page}")
-                    protected_url_check(final_page)
-                    current_url = final_page
-                    if current_url in visited_links:
-                        logger.info("Redirected page already indexed")
+                final_url = page.url
+                if final_url != initial_url:
+                    protected_url_check(final_url)
+                    initial_url = final_url
+                    if initial_url in visited_links:
+                        logger.info(
+                            f"{index}: {initial_url} redirected to {final_url} - already indexed"
+                        )
                         continue
-                    visited_links.add(current_url)
+                    logger.info(f"{index}: {initial_url} redirected to {final_url}")
+                    visited_links.add(initial_url)
+
+                if self.scroll_before_scraping:
+                    scroll_attempts = 0
+                    previous_height = page.evaluate("document.body.scrollHeight")
+                    while scroll_attempts < WEB_CONNECTOR_MAX_SCROLL_ATTEMPTS:
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        page.wait_for_load_state("networkidle", timeout=30000)
+                        new_height = page.evaluate("document.body.scrollHeight")
+                        if new_height == previous_height:
+                            break  # Stop scrolling when no more content is loaded
+                        previous_height = new_height
+                        scroll_attempts += 1
 
                 content = page.content()
                 soup = BeautifulSoup(content, "html.parser")
 
                 if self.recursive:
-                    internal_links = get_internal_links(base_url, current_url, soup)
+                    internal_links = get_internal_links(base_url, initial_url, soup)
                     for link in internal_links:
                         if link not in visited_links:
                             to_visit.append(link)
 
                 if page_response and str(page_response.status)[0] in ("4", "5"):
-                    last_error = f"Skipped indexing {current_url} due to HTTP {page_response.status} response"
+                    last_error = f"Skipped indexing {initial_url} due to HTTP {page_response.status} response"
                     logger.info(last_error)
                     continue
 
                 parsed_html = web_html_cleanup(soup, self.mintlify_cleanup)
 
+                """For websites containing iframes that need to be scraped,
+                the code below can extract text from within these iframes.
+                """
+                logger.debug(
+                    f"{index}: Length of cleaned text {len(parsed_html.cleaned_text)}"
+                )
+                if JAVASCRIPT_DISABLED_MESSAGE in parsed_html.cleaned_text:
+                    iframe_count = page.frame_locator("iframe").locator("html").count()
+                    if iframe_count > 0:
+                        iframe_texts = (
+                            page.frame_locator("iframe")
+                            .locator("html")
+                            .all_inner_texts()
+                        )
+                        document_text = "\n".join(iframe_texts)
+                        """ 700 is the threshold value for the length of the text extracted
+                        from the iframe based on the issue faced """
+                        if len(parsed_html.cleaned_text) < IFRAME_TEXT_LENGTH_THRESHOLD:
+                            parsed_html.cleaned_text = document_text
+                        else:
+                            parsed_html.cleaned_text += "\n" + document_text
+
+                # Sometimes pages with #! will serve duplicate content
+                # There are also just other ways this can happen
+                hashed_text = hash((parsed_html.title, parsed_html.cleaned_text))
+                if hashed_text in content_hashes:
+                    logger.info(
+                        f"{index}: Skipping duplicate title + content for {initial_url}"
+                    )
+                    continue
+                content_hashes.add(hashed_text)
+
                 doc_batch.append(
                     Document(
-                        id=current_url,
+                        id=initial_url,
                         sections=[
-                            Section(link=current_url, text=parsed_html.cleaned_text)
+                            Section(link=initial_url, text=parsed_html.cleaned_text)
                         ],
                         source=DocumentSource.WEB,
-                        semantic_identifier=parsed_html.title or current_url,
+                        semantic_identifier=parsed_html.title or initial_url,
                         metadata={},
                         doc_updated_at=_get_datetime_from_last_modified_header(
                             last_modified
@@ -379,7 +458,7 @@ class WebConnector(LoadConnector):
 
                 page.close()
             except Exception as e:
-                last_error = f"Failed to fetch '{current_url}': {e}"
+                last_error = f"Failed to fetch '{initial_url}': {e}"
                 logger.exception(last_error)
                 playwright.stop()
                 restart_playwright = True
@@ -401,6 +480,58 @@ class WebConnector(LoadConnector):
             if last_error:
                 raise RuntimeError(last_error)
             raise RuntimeError("No valid pages found.")
+
+    def validate_connector_settings(self) -> None:
+        # Make sure we have at least one valid URL to check
+        if not self.to_visit_list:
+            raise ConnectorValidationError(
+                "No URL configured. Please provide at least one valid URL."
+            )
+
+        if (
+            self.web_connector_type == WEB_CONNECTOR_VALID_SETTINGS.SITEMAP.value
+            or self.web_connector_type == WEB_CONNECTOR_VALID_SETTINGS.RECURSIVE.value
+        ):
+            return None
+
+        # We'll just test the first URL for connectivity and correctness
+        test_url = self.to_visit_list[0]
+
+        # Check that the URL is allowed and well-formed
+        try:
+            protected_url_check(test_url)
+        except ValueError as e:
+            raise ConnectorValidationError(
+                f"Protected URL check failed for '{test_url}': {e}"
+            )
+        except ConnectionError as e:
+            # Typically DNS or other network issues
+            raise ConnectorValidationError(str(e))
+
+        # Make a quick request to see if we get a valid response
+        try:
+            check_internet_connection(test_url)
+        except Exception as e:
+            err_str = str(e)
+            if "401" in err_str:
+                raise CredentialExpiredError(
+                    f"Unauthorized access to '{test_url}': {e}"
+                )
+            elif "403" in err_str:
+                raise InsufficientPermissionsError(
+                    f"Forbidden access to '{test_url}': {e}"
+                )
+            elif "404" in err_str:
+                raise ConnectorValidationError(f"Page not found for '{test_url}': {e}")
+            elif "Max retries exceeded" in err_str and "NameResolutionError" in err_str:
+                raise ConnectorValidationError(
+                    f"Unable to resolve hostname for '{test_url}'. Please check the URL and your internet connection."
+                )
+            else:
+                # Could be a 5xx or another error, treat as unexpected
+                raise UnexpectedValidationError(
+                    f"Unexpected error validating '{test_url}': {e}"
+                )
 
 
 if __name__ == "__main__":

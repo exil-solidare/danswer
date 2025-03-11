@@ -116,15 +116,24 @@ def delete_document_set_privacy__no_commit(
     """No private document sets in Onyx MIT"""
 
 
-def get_document_set_by_id(
+def get_document_set_by_id_for_user(
     db_session: Session,
     document_set_id: int,
-    user: User | None = None,
+    user: User | None,
     get_editable: bool = True,
 ) -> DocumentSetDBModel | None:
     stmt = select(DocumentSetDBModel).distinct()
     stmt = stmt.where(DocumentSetDBModel.id == document_set_id)
     stmt = _add_user_filters(stmt=stmt, user=user, get_editable=get_editable)
+    return db_session.scalar(stmt)
+
+
+def get_document_set_by_id(
+    db_session: Session,
+    document_set_id: int,
+) -> DocumentSetDBModel | None:
+    stmt = select(DocumentSetDBModel).distinct()
+    stmt = stmt.where(DocumentSetDBModel.id == document_set_id)
     return db_session.scalar(stmt)
 
 
@@ -189,7 +198,7 @@ def _check_if_cc_pairs_are_owned_by_groups(
             ids=missing_cc_pair_ids,
         )
         for cc_pair in cc_pairs:
-            if cc_pair.access_type != AccessType.PUBLIC:
+            if cc_pair.access_type == AccessType.PRIVATE:
                 raise ValueError(
                     f"Connector Credential Pair with ID: '{cc_pair.id}'"
                     " is not owned by the specified groups"
@@ -212,6 +221,8 @@ def insert_document_set(
             group_ids=document_set_creation_request.groups or [],
         )
 
+    new_document_set_row: DocumentSetDBModel
+    ds_cc_pairs: list[DocumentSet__ConnectorCredentialPair]
     try:
         new_document_set_row = DocumentSetDBModel(
             name=document_set_creation_request.name,
@@ -275,7 +286,7 @@ def update_document_set(
 
     try:
         # update the description
-        document_set_row = get_document_set_by_id(
+        document_set_row = get_document_set_by_id_for_user(
             db_session=db_session,
             document_set_id=document_set_update_request.id,
             user=user,
@@ -366,7 +377,7 @@ def mark_document_set_as_to_be_deleted(
     job which syncs these changes to Vespa."""
 
     try:
-        document_set_row = get_document_set_by_id(
+        document_set_row = get_document_set_by_id_for_user(
             db_session=db_session,
             document_set_id=document_set_id,
             user=user,
@@ -478,7 +489,7 @@ def fetch_document_sets(
 
 def fetch_all_document_sets_for_user(
     db_session: Session,
-    user: User | None = None,
+    user: User | None,
     get_editable: bool = True,
 ) -> Sequence[DocumentSetDBModel]:
     stmt = select(DocumentSetDBModel).distinct()
@@ -534,7 +545,7 @@ def fetch_documents_for_document_set_paginated(
     return documents, documents[-1].id if documents else None
 
 
-def construct_document_select_by_docset(
+def construct_document_id_select_by_docset(
     document_set_id: int,
     current_only: bool = True,
 ) -> Select:
@@ -543,7 +554,7 @@ def construct_document_select_by_docset(
     are background processing task generators."""
 
     stmt = (
-        select(Document)
+        select(Document.id)
         .join(
             DocumentByConnectorCredentialPair,
             DocumentByConnectorCredentialPair.id == Document.id,

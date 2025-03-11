@@ -32,10 +32,7 @@ def get_document_info(
     db_session: Session = Depends(get_session),
 ) -> DocumentInfo:
     search_settings = get_current_search_settings(db_session)
-
-    document_index = get_default_document_index(
-        primary_index_name=search_settings.index_name, secondary_index_name=None
-    )
+    document_index = get_default_document_index(search_settings, None)
 
     user_acl_filters = build_access_filters_for_user(user, db_session)
     inference_chunks = document_index.id_based_retrieval(
@@ -79,10 +76,7 @@ def get_chunk_info(
     db_session: Session = Depends(get_session),
 ) -> ChunkInfo:
     search_settings = get_current_search_settings(db_session)
-
-    document_index = get_default_document_index(
-        primary_index_name=search_settings.index_name, secondary_index_name=None
-    )
+    document_index = get_default_document_index(search_settings, None)
 
     user_acl_filters = build_access_filters_for_user(user, db_session)
     chunk_request = VespaChunkRequest(
@@ -90,6 +84,7 @@ def get_chunk_info(
         min_chunk_ind=chunk_id,
         max_chunk_ind=chunk_id,
     )
+
     inference_chunks = document_index.id_based_retrieval(
         chunk_requests=[chunk_request],
         filters=IndexFilters(access_control_list=user_acl_filters),

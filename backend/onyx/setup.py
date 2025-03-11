@@ -11,7 +11,9 @@ from onyx.configs.model_configs import FAST_GEN_AI_MODEL_VERSION
 from onyx.configs.model_configs import GEN_AI_API_KEY
 from onyx.configs.model_configs import GEN_AI_MODEL_VERSION
 from onyx.context.search.models import SavedSearchSettings
-from onyx.context.search.retrieval.search_runner import download_nltk_data
+from onyx.context.search.retrieval.search_runner import (
+    download_nltk_data,
+)
 from onyx.db.connector import check_connectors_exist
 from onyx.db.connector import create_initial_default_connector
 from onyx.db.connector_credential_pair import associate_default_cc_pair
@@ -19,23 +21,26 @@ from onyx.db.connector_credential_pair import get_connector_credential_pairs
 from onyx.db.connector_credential_pair import resync_cc_pair
 from onyx.db.credentials import create_initial_public_credential
 from onyx.db.document import check_docs_exist
+from onyx.db.enums import EmbeddingPrecision
 from onyx.db.index_attempt import cancel_indexing_attempts_past_model
 from onyx.db.index_attempt import expire_index_attempts
 from onyx.db.llm import fetch_default_provider
 from onyx.db.llm import update_default_provider
 from onyx.db.llm import upsert_llm_provider
 from onyx.db.persona import delete_old_default_personas
+from onyx.db.search_settings import get_active_search_settings
 from onyx.db.search_settings import get_current_search_settings
 from onyx.db.search_settings import get_secondary_search_settings
 from onyx.db.search_settings import update_current_search_settings
 from onyx.db.search_settings import update_secondary_search_settings
-from onyx.db.swap_index import check_index_swap
+from onyx.db.swap_index import check_and_perform_index_swap
 from onyx.document_index.factory import get_default_document_index
 from onyx.document_index.interfaces import DocumentIndex
 from onyx.document_index.vespa.index import VespaIndex
 from onyx.indexing.models import IndexingSetting
 from onyx.key_value_store.factory import get_kv_store
 from onyx.key_value_store.interface import KvKeyNotFoundError
+from onyx.llm.llm_provider_options import OPEN_AI_MODEL_NAMES
 from onyx.natural_language_processing.search_nlp_models import EmbeddingModel
 from onyx.natural_language_processing.search_nlp_models import warm_up_bi_encoder
 from onyx.natural_language_processing.search_nlp_models import warm_up_cross_encoder
@@ -61,7 +66,7 @@ logger = setup_logger()
 
 
 def setup_onyx(
-    db_session: Session, tenant_id: str | None, cohere_enabled: bool = False
+    db_session: Session, tenant_id: str, cohere_enabled: bool = False
 ) -> None:
     """
     Setup Onyx for a particular tenant. In the Single Tenant case, it will set it up for the default schema
@@ -69,9 +74,20 @@ def setup_onyx(
 
     The Tenant Service calls the tenants/create endpoint which runs this.
     """
-    check_index_swap(db_session=db_session)
-    search_settings = get_current_search_settings(db_session)
-    secondary_search_settings = get_secondary_search_settings(db_session)
+    check_and_perform_index_swap(db_session=db_session)
+
+    active_search_settings = get_active_search_settings(db_session)
+    search_settings = active_search_settings.primary
+    secondary_search_settings = active_search_settings.secondary
+
+    # search_settings = get_current_search_settings(db_session)
+    # multipass_config_1 = get_multipass_config(search_settings)
+
+    # secondary_large_chunks_enabled: bool | None = None
+    # secondary_search_settings = get_secondary_search_settings(db_session)
+    # if secondary_search_settings:
+    #     multipass_config_2 = get_multipass_config(secondary_search_settings)
+    #     secondary_large_chunks_enabled = multipass_config_2.enable_large_chunks
 
     # Break bad state for thrashing indexes
     if secondary_search_settings and DISABLE_INDEX_UPDATE_ON_SWAP:
@@ -122,10 +138,8 @@ def setup_onyx(
     # takes a bit of time to start up
     logger.notice("Verifying Document Index(s) is/are available.")
     document_index = get_default_document_index(
-        primary_index_name=search_settings.index_name,
-        secondary_index_name=secondary_search_settings.index_name
-        if secondary_search_settings
-        else None,
+        search_settings,
+        secondary_search_settings,
     )
 
     success = setup_vespa(
@@ -230,16 +244,24 @@ def setup_vespa(
         try:
             logger.notice(f"Setting up Vespa (attempt {x+1}/{num_attempts})...")
             document_index.ensure_indices_exist(
-                index_embedding_dim=index_setting.model_dim,
-                secondary_index_embedding_dim=secondary_index_setting.model_dim
-                if secondary_index_setting
-                else None,
+                primary_embedding_dim=index_setting.final_embedding_dim,
+                primary_embedding_precision=index_setting.embedding_precision,
+                secondary_index_embedding_dim=(
+                    secondary_index_setting.final_embedding_dim
+                    if secondary_index_setting
+                    else None
+                ),
+                secondary_index_embedding_precision=(
+                    secondary_index_setting.embedding_precision
+                    if secondary_index_setting
+                    else None
+                ),
             )
 
             logger.notice("Vespa setup complete.")
             return True
         except Exception:
-            logger.notice(
+            logger.exception(
                 f"Vespa setup did not succeed. The Vespa service may not be ready yet. Retrying in {WAIT_SECONDS} seconds."
             )
             time.sleep(WAIT_SECONDS)
@@ -269,6 +291,7 @@ def setup_postgres(db_session: Session) -> None:
     if GEN_AI_API_KEY and fetch_default_provider(db_session) is None:
         # Only for dev flows
         logger.notice("Setting up default OpenAI LLM for dev.")
+
         llm_model = GEN_AI_MODEL_VERSION or "gpt-4o-mini"
         fast_model = FAST_GEN_AI_MODEL_VERSION or "gpt-4o-mini"
         model_req = LLMProviderUpsertRequest(
@@ -282,8 +305,8 @@ def setup_postgres(db_session: Session) -> None:
             fast_default_model_name=fast_model,
             is_public=True,
             groups=[],
-            display_model_names=[llm_model, fast_model],
-            model_names=[llm_model, fast_model],
+            display_model_names=OPEN_AI_MODEL_NAMES,
+            model_names=OPEN_AI_MODEL_NAMES,
         )
         new_llm_provider = upsert_llm_provider(
             llm_provider=model_req, db_session=db_session
@@ -346,6 +369,11 @@ def setup_vespa_multitenant(supported_indices: list[SupportedEmbeddingModel]) ->
                 ],
                 embedding_dims=[index.dim for index in supported_indices]
                 + [index.dim for index in supported_indices],
+                # on the cloud, just use float for all indices, the option to change this
+                # is not exposed to the user
+                embedding_precisions=[
+                    EmbeddingPrecision.FLOAT for _ in range(len(supported_indices) * 2)
+                ],
             )
 
             logger.notice("Vespa setup complete.")

@@ -15,7 +15,7 @@ export function checkUserIdOwnsAssistant(
     (!userId ||
       checkUserIsNoAuthUser(userId) ||
       assistant.owner?.id === userId) &&
-    !assistant.is_default_persona
+    !assistant.builtin_persona
   );
 }
 
@@ -131,7 +131,8 @@ export function filterAssistants(
 
   if (!hasAnyConnectors) {
     filteredAssistants = filteredAssistants.filter(
-      (assistant) => assistant.num_chunks === 0
+      (assistant) =>
+        assistant.num_chunks === 0 || assistant.document_sets.length > 0
     );
   }
 

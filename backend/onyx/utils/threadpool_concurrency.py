@@ -1,3 +1,5 @@
+import contextvars
+import threading
 import uuid
 from collections.abc import Callable
 from concurrent.futures import as_completed
@@ -40,8 +42,11 @@ def run_functions_tuples_in_parallel(
 
     results = []
     with ThreadPoolExecutor(max_workers=workers) as executor:
+        # The primary reason for propagating contextvars is to allow acquiring a db session
+        # that respects tenant id. Context.run is expected to be low-overhead, but if we later
+        # find that it is increasing latency we can make using it optional.
         future_to_index = {
-            executor.submit(func, *args): i
+            executor.submit(contextvars.copy_context().run, func, *args): i
             for i, (func, args) in enumerate(functions_with_args)
         }
 
@@ -86,11 +91,16 @@ def run_functions_in_parallel(
     Executes a list of FunctionCalls in parallel and stores the results in a dictionary where the keys
     are the result_id of the FunctionCall and the values are the results of the call.
     """
-    results = {}
+    results: dict[str, Any] = {}
+
+    if len(function_calls) == 0:
+        return results
 
     with ThreadPoolExecutor(max_workers=len(function_calls)) as executor:
         future_to_id = {
-            executor.submit(func_call.execute): func_call.result_id
+            executor.submit(
+                contextvars.copy_context().run, func_call.execute
+            ): func_call.result_id
             for func_call in function_calls
         }
 
@@ -106,3 +116,77 @@ def run_functions_in_parallel(
                     raise
 
     return results
+
+
+class TimeoutThread(threading.Thread, Generic[R]):
+    def __init__(
+        self, timeout: float, func: Callable[..., R], *args: Any, **kwargs: Any
+    ):
+        super().__init__()
+        self.timeout = timeout
+        self.func = func
+        self.args = args
+        self.kwargs = kwargs
+        self.exception: Exception | None = None
+
+    def run(self) -> None:
+        try:
+            self.result = self.func(*self.args, **self.kwargs)
+        except Exception as e:
+            self.exception = e
+
+    def end(self) -> None:
+        raise TimeoutError(
+            f"Function {self.func.__name__} timed out after {self.timeout} seconds"
+        )
+
+
+def run_with_timeout(
+    timeout: float, func: Callable[..., R], *args: Any, **kwargs: Any
+) -> R:
+    """
+    Executes a function with a timeout. If the function doesn't complete within the specified
+    timeout, raises TimeoutError.
+    """
+    context = contextvars.copy_context()
+    task = TimeoutThread(timeout, context.run, func, *args, **kwargs)
+    task.start()
+    task.join(timeout)
+
+    if task.exception is not None:
+        raise task.exception
+    if task.is_alive():
+        task.end()
+
+    return task.result
+
+
+# NOTE: this function should really only be used when run_functions_tuples_in_parallel is
+# difficult to use. It's up to the programmer to call wait_on_background on the thread after
+# the code you want to run in parallel is finished. As with all python thread parallelism,
+# this is only useful for I/O bound tasks.
+def run_in_background(
+    func: Callable[..., R], *args: Any, **kwargs: Any
+) -> TimeoutThread[R]:
+    """
+    Runs a function in a background thread. Returns a TimeoutThread object that can be used
+    to wait for the function to finish with wait_on_background.
+    """
+    context = contextvars.copy_context()
+    # Timeout not used in the non-blocking case
+    task = TimeoutThread(-1, context.run, func, *args, **kwargs)
+    task.start()
+    return task
+
+
+def wait_on_background(task: TimeoutThread[R]) -> R:
+    """
+    Used in conjunction with run_in_background. blocks until the task is finished,
+    then returns the result of the task.
+    """
+    task.join()
+
+    if task.exception is not None:
+        raise task.exception
+
+    return task.result

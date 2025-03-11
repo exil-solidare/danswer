@@ -23,16 +23,17 @@ from onyx.configs.onyxbot_configs import MAX_THREAD_CONTEXT_PERCENTAGE
 from onyx.context.search.enums import OptionalSearchSetting
 from onyx.context.search.models import BaseFilters
 from onyx.context.search.models import RetrievalDetails
-from onyx.db.engine import get_session_with_tenant
+from onyx.db.engine import get_session_with_current_tenant
 from onyx.db.models import SlackChannelConfig
 from onyx.db.models import User
 from onyx.db.persona import get_persona_by_id
+from onyx.db.persona import persona_has_search_tool
 from onyx.db.users import get_user_by_email
 from onyx.onyxbot.slack.blocks import build_slack_response_blocks
 from onyx.onyxbot.slack.handlers.utils import send_team_member_message
 from onyx.onyxbot.slack.handlers.utils import slackify_message_thread
 from onyx.onyxbot.slack.models import SlackMessageInfo
-from onyx.onyxbot.slack.utils import respond_in_thread
+from onyx.onyxbot.slack.utils import respond_in_thread_or_channel
 from onyx.onyxbot.slack.utils import SlackRateLimiter
 from onyx.onyxbot.slack.utils import update_emote_react
 from onyx.server.query_and_chat.models import CreateChatMessageRequest
@@ -64,37 +65,62 @@ def rate_limits(
 
 def handle_regular_answer(
     message_info: SlackMessageInfo,
-    slack_channel_config: SlackChannelConfig | None,
+    slack_channel_config: SlackChannelConfig,
     receiver_ids: list[str] | None,
     client: WebClient,
     channel: str,
     logger: OnyxLoggingAdapter,
     feedback_reminder_id: str | None,
-    tenant_id: str | None,
     num_retries: int = DANSWER_BOT_NUM_RETRIES,
     thread_context_percent: float = MAX_THREAD_CONTEXT_PERCENTAGE,
     should_respond_with_error_msgs: bool = DANSWER_BOT_DISPLAY_ERROR_MSGS,
     disable_docs_only_answer: bool = DANSWER_BOT_DISABLE_DOCS_ONLY_ANSWER,
 ) -> bool:
-    channel_conf = slack_channel_config.channel_config if slack_channel_config else None
+    channel_conf = slack_channel_config.channel_config
 
     messages = message_info.thread_messages
 
     message_ts_to_respond_to = message_info.msg_to_respond
     is_bot_msg = message_info.is_bot_msg
+
+    # Capture whether response mode for channel is ephemeral. Even if the channel is set
+    # to respond with an ephemeral message, we still send as non-ephemeral if
+    # the message is a dm with the Onyx bot.
+    send_as_ephemeral = (
+        slack_channel_config.channel_config.get("is_ephemeral", False)
+        and not message_info.is_bot_dm
+    )
+
+    # If the channel mis configured to respond with an ephemeral message,
+    # or the message is a dm to the Onyx bot, we should use the proper onyx user from the email.
+    # This will make documents privately accessible to the user available to Onyx Bot answers.
+    # Otherwise - if not ephemeral or DM to Onyx Bot - we must use None as the user to restrict
+    # to public docs.
+
     user = None
-    if message_info.is_bot_dm:
+    if message_info.is_bot_dm or send_as_ephemeral:
         if message_info.email:
-            with get_session_with_tenant(tenant_id) as db_session:
+            with get_session_with_current_tenant() as db_session:
                 user = get_user_by_email(message_info.email, db_session)
+
+    target_thread_ts = (
+        None
+        if send_as_ephemeral and len(message_info.thread_messages) < 2
+        else message_ts_to_respond_to
+    )
+    target_receiver_ids = (
+        [message_info.sender_id]
+        if message_info.sender_id and send_as_ephemeral
+        else receiver_ids
+    )
 
     document_set_names: list[str] | None = None
     prompt = None
     # If no persona is specified, use the default search based persona
     # This way slack flow always has a persona
-    persona = slack_channel_config.persona if slack_channel_config else None
+    persona = slack_channel_config.persona
     if not persona:
-        with get_session_with_tenant(tenant_id) as db_session:
+        with get_session_with_current_tenant() as db_session:
             persona = get_persona_by_id(DEFAULT_PERSONA_ID, user, db_session)
             document_set_names = [
                 document_set.name for document_set in persona.document_sets
@@ -106,7 +132,8 @@ def handle_regular_answer(
         ]
         prompt = persona.prompts[0] if persona.prompts else None
 
-    should_respond_even_with_no_docs = persona.num_chunks == 0 if persona else False
+    with get_session_with_current_tenant() as db_session:
+        expecting_search_result = persona_has_search_tool(persona.id, db_session)
 
     # TODO: Add in support for Slack to truncate messages based on max LLM context
     # llm, _ = get_llms_for_persona(persona)
@@ -126,17 +153,17 @@ def handle_regular_answer(
     #     messages, max_tokens=max_history_tokens, llm_tokenizer=llm_tokenizer
     # )
 
-    combined_message = slackify_message_thread(messages)
+    # NOTE: only the message history will contain the person asking. This is likely
+    # fine since the most common use case for this info is when referring to a user
+    # who previously posted in the thread.
+    user_message = messages[-1]
+    history_messages = messages[:-1]
+    single_message_history = slackify_message_thread(history_messages) or None
 
+    # Always check for ACL permissions, also for documnt sets that were explicitly added
+    # to the Bot by the Administrator. (Change relative to earlier behavior where all documents
+    # in an attached document set were available to all users in the channel.)
     bypass_acl = False
-    if (
-        slack_channel_config
-        and slack_channel_config.persona
-        and slack_channel_config.persona.document_sets
-    ):
-        # For Slack channels, use the full document set, admin will be warned when configuring it
-        # with non-public document sets
-        bypass_acl = True
 
     if not message_ts_to_respond_to and not is_bot_msg:
         # if the message is not "/onyx" command, then it should have a message ts to respond to
@@ -153,12 +180,13 @@ def handle_regular_answer(
     def _get_slack_answer(
         new_message_request: CreateChatMessageRequest, onyx_user: User | None
     ) -> ChatOnyxBotResponse:
-        with get_session_with_tenant(tenant_id) as db_session:
+        with get_session_with_current_tenant() as db_session:
             packets = stream_chat_message_objects(
                 new_msg_req=new_message_request,
                 user=onyx_user,
                 db_session=db_session,
                 bypass_acl=bypass_acl,
+                single_message_history=single_message_history,
             )
 
             answer = gather_stream_for_slack(packets)
@@ -184,11 +212,7 @@ def handle_regular_answer(
         # auto_detect_filters = (
         #     persona.llm_filter_extraction if persona is not None else True
         # )
-        auto_detect_filters = (
-            slack_channel_config.enable_auto_filters
-            if slack_channel_config is not None
-            else False
-        )
+        auto_detect_filters = slack_channel_config.enable_auto_filters
         retrieval_details = RetrievalDetails(
             run_search=OptionalSearchSetting.ALWAYS,
             real_time=False,
@@ -196,9 +220,9 @@ def handle_regular_answer(
             enable_auto_detect_filters=auto_detect_filters,
         )
 
-        with get_session_with_tenant(tenant_id) as db_session:
+        with get_session_with_current_tenant() as db_session:
             answer_request = prepare_chat_message_request(
-                message_text=combined_message,
+                message_text=user_message.message,
                 user=user,
                 persona_id=persona.id,
                 # This is not used in the Slack flow, only in the answer API
@@ -220,12 +244,13 @@ def handle_regular_answer(
         # Optionally, respond in thread with the error message, Used primarily
         # for debugging purposes
         if should_respond_with_error_msgs:
-            respond_in_thread(
+            respond_in_thread_or_channel(
                 client=client,
                 channel=channel,
-                receiver_ids=None,
+                receiver_ids=target_receiver_ids,
                 text=f"Encountered exception when trying to answer: \n\n```{e}```",
-                thread_ts=message_ts_to_respond_to,
+                thread_ts=target_thread_ts,
+                send_as_ephemeral=send_as_ephemeral,
             )
 
         # In case of failures, don't keep the reaction there permanently
@@ -243,32 +268,36 @@ def handle_regular_answer(
     if answer is None:
         assert DISABLE_GENERATIVE_AI is True
         try:
-            respond_in_thread(
+            respond_in_thread_or_channel(
                 client=client,
                 channel=channel,
-                receiver_ids=receiver_ids,
+                receiver_ids=target_receiver_ids,
                 text="Hello! Onyx has some results for you!",
                 blocks=[
                     SectionBlock(
                         text="Onyx is down for maintenance.\nWe're working hard on recharging the AI!"
                     )
                 ],
-                thread_ts=message_ts_to_respond_to,
+                thread_ts=target_thread_ts,
+                send_as_ephemeral=send_as_ephemeral,
                 # don't unfurl, since otherwise we will have 5+ previews which makes the message very long
                 unfurl=False,
             )
 
             # For DM (ephemeral message), we need to create a thread via a normal message so the user can see
             # the ephemeral message. This also will give the user a notification which ephemeral message does not.
-            if receiver_ids:
-                respond_in_thread(
+
+            # If the channel is ephemeral, we don't need to send a message to the user since they will already see the message
+            if target_receiver_ids and not send_as_ephemeral:
+                respond_in_thread_or_channel(
                     client=client,
                     channel=channel,
                     text=(
                         "👋 Hi, we've just gathered and forwarded the relevant "
                         + "information to the team. They'll get back to you shortly!"
                     ),
-                    thread_ts=message_ts_to_respond_to,
+                    thread_ts=target_thread_ts,
+                    send_as_ephemeral=send_as_ephemeral,
                 )
 
             return False
@@ -305,24 +334,25 @@ def handle_regular_answer(
         return True
 
     retrieval_info = answer.docs
-    if not retrieval_info:
+    if not retrieval_info and expecting_search_result:
         # This should not happen, even with no docs retrieved, there is still info returned
         raise RuntimeError("Failed to retrieve docs, cannot answer question.")
 
-    top_docs = retrieval_info.top_documents
-    if not top_docs and not should_respond_even_with_no_docs:
+    top_docs = retrieval_info.top_documents if retrieval_info else []
+    if not top_docs and expecting_search_result:
         logger.error(
-            f"Unable to answer question: '{combined_message}' - no documents found"
+            f"Unable to answer question: '{user_message}' - no documents found"
         )
         # Optionally, respond in thread with the error message
         # Used primarily for debugging purposes
         if should_respond_with_error_msgs:
-            respond_in_thread(
+            respond_in_thread_or_channel(
                 client=client,
                 channel=channel,
-                receiver_ids=None,
+                receiver_ids=target_receiver_ids,
                 text="Found no documents when trying to answer. Did you index any documents?",
-                thread_ts=message_ts_to_respond_to,
+                thread_ts=target_thread_ts,
+                send_as_ephemeral=send_as_ephemeral,
             )
         return True
 
@@ -339,7 +369,8 @@ def handle_regular_answer(
     )
 
     if (
-        only_respond_if_citations
+        expecting_search_result
+        and only_respond_if_citations
         and not answer.citations
         and not message_info.bypass_filters
     ):
@@ -349,47 +380,67 @@ def handle_regular_answer(
         # Optionally, respond in thread with the error message
         # Used primarily for debugging purposes
         if should_respond_with_error_msgs:
-            respond_in_thread(
+            respond_in_thread_or_channel(
                 client=client,
                 channel=channel,
-                receiver_ids=None,
+                receiver_ids=target_receiver_ids,
                 text="Found no citations or quotes when trying to answer.",
-                thread_ts=message_ts_to_respond_to,
+                thread_ts=target_thread_ts,
+                send_as_ephemeral=send_as_ephemeral,
             )
         return True
 
+    if (
+        send_as_ephemeral
+        and target_receiver_ids is not None
+        and len(target_receiver_ids) == 1
+    ):
+        offer_ephemeral_publication = True
+        skip_ai_feedback = True
+    else:
+        offer_ephemeral_publication = False
+        skip_ai_feedback = False if feedback_reminder_id else True
+
     all_blocks = build_slack_response_blocks(
-        tenant_id=tenant_id,
         message_info=message_info,
         answer=answer,
         channel_conf=channel_conf,
         use_citations=True,  # No longer supporting quotes
         feedback_reminder_id=feedback_reminder_id,
+        expecting_search_result=expecting_search_result,
+        offer_ephemeral_publication=offer_ephemeral_publication,
+        skip_ai_feedback=skip_ai_feedback,
     )
 
     try:
-        respond_in_thread(
+        respond_in_thread_or_channel(
             client=client,
             channel=channel,
-            receiver_ids=[message_info.sender]
-            if message_info.is_bot_msg and message_info.sender
-            else receiver_ids,
+            receiver_ids=target_receiver_ids,
             text="Hello! Onyx has some results for you!",
             blocks=all_blocks,
-            thread_ts=message_ts_to_respond_to,
+            thread_ts=target_thread_ts,
             # don't unfurl, since otherwise we will have 5+ previews which makes the message very long
             unfurl=False,
+            send_as_ephemeral=send_as_ephemeral,
         )
 
         # For DM (ephemeral message), we need to create a thread via a normal message so the user can see
         # the ephemeral message. This also will give the user a notification which ephemeral message does not.
         # if there is no message_ts_to_respond_to, and we have made it this far, then this is a /onyx message
         # so we shouldn't send_team_member_message
-        if receiver_ids and message_ts_to_respond_to is not None:
+        if (
+            target_receiver_ids
+            and message_ts_to_respond_to is not None
+            and not send_as_ephemeral
+            and target_thread_ts is not None
+        ):
             send_team_member_message(
                 client=client,
                 channel=channel,
-                thread_ts=message_ts_to_respond_to,
+                thread_ts=target_thread_ts,
+                receiver_ids=target_receiver_ids,
+                send_as_ephemeral=send_as_ephemeral,
             )
 
         return False

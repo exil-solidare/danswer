@@ -7,8 +7,9 @@ import {
   MicrosoftIcon,
   NomicIcon,
   OpenAIIcon,
+  OpenAIISVG,
   OpenSourceIcon,
-  VoyageIcon,
+  VoyageIconSVG,
 } from "@/components/icons/icons";
 
 export enum EmbeddingProvider {
@@ -54,6 +55,7 @@ export interface EmbeddingModelDescriptor {
   api_version?: string | null;
   deployment_name?: string | null;
   index_name: string | null;
+  background_reindex_enabled?: boolean;
 }
 
 export interface CloudEmbeddingModel extends EmbeddingModelDescriptor {
@@ -216,7 +218,7 @@ export const AVAILABLE_CLOUD_PROVIDERS: CloudEmbeddingProvider[] = [
   {
     provider_type: EmbeddingProvider.OPENAI,
     website: "https://openai.com",
-    icon: OpenAIIcon,
+    icon: OpenAIISVG,
     description: "AI industry leader known for ChatGPT and DALL-E",
     apiLink: "https://platform.openai.com/api-keys",
     docsLink: "https://docs.onyx.app/guides/embedding_providers#openai-models",
@@ -266,7 +268,7 @@ export const AVAILABLE_CLOUD_PROVIDERS: CloudEmbeddingProvider[] = [
     embedding_models: [
       {
         provider_type: EmbeddingProvider.GOOGLE,
-        model_name: "text-embedding-004",
+        model_name: "text-embedding-005",
         description: "Google's most recent text embedding model.",
         pricePerMillion: 0.025,
         model_dim: 768,
@@ -295,7 +297,7 @@ export const AVAILABLE_CLOUD_PROVIDERS: CloudEmbeddingProvider[] = [
   {
     provider_type: EmbeddingProvider.VOYAGE,
     website: "https://www.voyageai.com",
-    icon: VoyageIcon,
+    icon: VoyageIconSVG,
     description: "Advanced NLP research startup born from Stanford AI Labs",
     docsLink: "https://docs.onyx.app/guides/embedding_providers#voyage-models",
     apiLink: "https://www.voyageai.com/dashboard",

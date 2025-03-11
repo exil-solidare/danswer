@@ -1,17 +1,15 @@
 import {
   AnthropicIcon,
   AmazonIcon,
-  AWSIcon,
-  AzureIcon,
   CPUIcon,
   MicrosoftIconSVG,
   MistralIcon,
   MetaIcon,
-  OpenAIIcon,
   GeminiIcon,
-  OpenSourceIcon,
+  IconProps,
+  DeepseekIcon,
+  OpenAISVG,
 } from "@/components/icons/icons";
-import { FaRobot } from "react-icons/fa";
 
 export interface CustomConfigKey {
   name: string;
@@ -73,38 +71,42 @@ export interface LLMProviderDescriptor {
 }
 
 export const getProviderIcon = (providerName: string, modelName?: string) => {
-  switch (providerName) {
-    case "openai":
-      // Special cases for openai based on modelName
-      if (modelName?.toLowerCase().includes("amazon")) {
-        return AmazonIcon;
-      }
-      if (modelName?.toLowerCase().includes("phi")) {
-        return MicrosoftIconSVG;
-      }
-      if (modelName?.toLowerCase().includes("mistral")) {
-        return MistralIcon;
-      }
-      if (modelName?.toLowerCase().includes("llama")) {
-        return MetaIcon;
-      }
-      if (modelName?.toLowerCase().includes("gemini")) {
-        return GeminiIcon;
-      }
-      if (modelName?.toLowerCase().includes("claude")) {
-        return AnthropicIcon;
-      }
+  const iconMap: Record<
+    string,
+    ({ size, className }: IconProps) => JSX.Element
+  > = {
+    amazon: AmazonIcon,
+    phi: MicrosoftIconSVG,
+    mistral: MistralIcon,
+    ministral: MistralIcon,
+    llama: MetaIcon,
+    gemini: GeminiIcon,
+    deepseek: DeepseekIcon,
+    claude: AnthropicIcon,
+    anthropic: AnthropicIcon,
+    openai: OpenAISVG,
+    microsoft: MicrosoftIconSVG,
+    meta: MetaIcon,
+    google: GeminiIcon,
+  };
 
-      return OpenAIIcon; // Default for openai
-    case "anthropic":
-      return AnthropicIcon;
-    case "bedrock":
-      return AWSIcon;
-    case "azure":
-      return AzureIcon;
-    default:
-      return CPUIcon;
+  // First check if provider name directly matches an icon
+  if (providerName.toLowerCase() in iconMap) {
+    return iconMap[providerName.toLowerCase()];
   }
+
+  // Then check if model name contains any of the keys
+  if (modelName) {
+    const lowerModelName = modelName.toLowerCase();
+    for (const [key, icon] of Object.entries(iconMap)) {
+      if (lowerModelName.includes(key)) {
+        return icon;
+      }
+    }
+  }
+
+  // Fallback to CPU icon if no matches
+  return CPUIcon;
 };
 
 export const isAnthropic = (provider: string, modelName: string) =>

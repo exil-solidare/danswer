@@ -9,8 +9,6 @@ import {
 } from "react-icons/fi";
 import { FeedbackType } from "../types";
 import React, {
-  memo,
-  ReactNode,
   useCallback,
   useContext,
   useEffect,
@@ -18,16 +16,16 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { unified } from "unified";
 import ReactMarkdown from "react-markdown";
-import {
-  OnyxDocument,
-  FilteredOnyxDocument,
-  LoadedOnyxDocument,
-} from "@/lib/search/interfaces";
+import { OnyxDocument, FilteredOnyxDocument } from "@/lib/search/interfaces";
 import { SearchSummary } from "./SearchSummary";
-
 import { SkippedSearch } from "./SkippedSearch";
 import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import rehypeSanitize from "rehype-sanitize";
+import rehypeStringify from "rehype-stringify";
 import { CopyButton } from "@/components/CopyButton";
 import { ChatFileType, FileDescriptor, ToolCallMetadata } from "../interfaces";
 import {
@@ -41,12 +39,10 @@ import { DocumentPreview } from "../files/documents/DocumentPreview";
 import { InMessageImage } from "../files/images/InMessageImage";
 import { CodeBlock } from "./CodeBlock";
 import rehypePrism from "rehype-prism-plus";
-
 import "prismjs/themes/prism-tomorrow.css";
 import "./custom-code-styles.css";
 import { Persona } from "@/app/admin/assistants/interfaces";
 import { AssistantIcon } from "@/components/assistants/AssistantIcon";
-
 import { LikeFeedback, DislikeFeedback } from "@/components/icons/icons";
 import {
   CustomTooltip,
@@ -63,19 +59,18 @@ import { useMouseTracking } from "./hooks";
 import { SettingsContext } from "@/components/settings/SettingsProvider";
 import GeneratingImageDisplay from "../tools/GeneratingImageDisplay";
 import RegenerateOption from "../RegenerateOption";
-import { LlmOverride } from "@/lib/hooks";
+import { LlmDescriptor } from "@/lib/hooks";
 import { ContinueGenerating } from "./ContinueMessage";
 import { MemoizedAnchor, MemoizedParagraph } from "./MemoizedTextComponents";
 import { extractCodeText, preprocessLaTeX } from "./codeUtils";
 import ToolResult from "../../../components/tools/ToolResult";
 import CsvContent from "../../../components/tools/CSVContent";
-import SourceCard, {
-  SeeMoreBlock,
-} from "@/components/chat_search/sources/SourceCard";
-
+import { SeeMoreBlock } from "@/components/chat/sources/SourceCard";
+import { SourceCard } from "./SourcesDisplay";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import { copyAll, handleCopy } from "./copyingUtils";
 
 const TOOLS_WITH_CUSTOM_HANDLING = [
   SEARCH_TOOL_NAME,
@@ -111,7 +106,6 @@ function FileDisplay({
                 <div key={file.id} className="w-fit">
                   <DocumentPreview
                     fileName={file.name || file.id}
-                    maxWidth="max-w-64"
                     alignBubble={alignBubble}
                   />
                 </div>
@@ -169,7 +163,6 @@ function FileDisplay({
 export const AIMessage = ({
   regenerate,
   overriddenModel,
-  selectedMessageForDocDisplay,
   continueGenerating,
   shared,
   isActive,
@@ -177,7 +170,6 @@ export const AIMessage = ({
   alternativeAssistant,
   docs,
   messageId,
-  documentSelectionToggled,
   content,
   files,
   selectedDocuments,
@@ -187,7 +179,6 @@ export const AIMessage = ({
   isComplete,
   hasDocs,
   handleFeedback,
-  handleShowRetrieved,
   handleSearchQueryEdit,
   handleForceSearch,
   retrievalDisabled,
@@ -196,9 +187,10 @@ export const AIMessage = ({
   onMessageSelection,
   setPresentingDocument,
   index,
+  documentSidebarVisible,
+  removePadding,
 }: {
   index?: number;
-  selectedMessageForDocDisplay?: number | null;
   shared?: boolean;
   isActive?: boolean;
   continueGenerating?: () => void;
@@ -211,21 +203,21 @@ export const AIMessage = ({
   currentPersona: Persona;
   messageId: number | null;
   content: string | JSX.Element;
-  documentSelectionToggled?: boolean;
   files?: FileDescriptor[];
   query?: string;
   citedDocuments?: [string, OnyxDocument][] | null;
   toolCall?: ToolCallMetadata | null;
   isComplete?: boolean;
+  documentSidebarVisible?: boolean;
   hasDocs?: boolean;
   handleFeedback?: (feedbackType: FeedbackType) => void;
-  handleShowRetrieved?: (messageNumber: number | null) => void;
   handleSearchQueryEdit?: (query: string) => void;
   handleForceSearch?: () => void;
   retrievalDisabled?: boolean;
   overriddenModel?: string;
-  regenerate?: (modelOverRide: LlmOverride) => Promise<void>;
-  setPresentingDocument?: (document: OnyxDocument) => void;
+  regenerate?: (modelOverRide: LlmDescriptor) => Promise<void>;
+  setPresentingDocument: (document: OnyxDocument) => void;
+  removePadding?: boolean;
 }) => {
   const toolCallGenerating = toolCall && !toolCall.tool_result;
 
@@ -324,6 +316,7 @@ export const AIMessage = ({
       <MemoizedAnchor
         updatePresentingDocument={setPresentingDocument!}
         docs={docs}
+        href={props.href}
       >
         {props.children}
       </MemoizedAnchor>
@@ -335,14 +328,28 @@ export const AIMessage = ({
     ? otherMessagesCanSwitchTo?.indexOf(messageId)
     : undefined;
 
-  const uniqueSources: ValidSources[] = Array.from(
-    new Set((docs || []).map((doc) => doc.source_type))
-  ).slice(0, 3);
+  const webSourceDomains: string[] = Array.from(
+    new Set(
+      docs
+        ?.filter((doc) => doc.source_type === "web")
+        .map((doc) => {
+          try {
+            const url = new URL(doc.link);
+            return `https://${url.hostname}`;
+          } catch {
+            return doc.link; // fallback to full link if parsing fails
+          }
+        }) || []
+    )
+  );
 
   const markdownComponents = useMemo(
     () => ({
       a: anchorCallback,
       p: paragraphCallback,
+      b: ({ node, className, children }: any) => {
+        return <span className={className}>||||{children}</span>;
+      },
       code: ({ node, className, children }: any) => {
         const codeText = extractCodeText(
           node,
@@ -359,16 +366,23 @@ export const AIMessage = ({
     }),
     [anchorCallback, paragraphCallback, finalContent]
   );
+  const markdownRef = useRef<HTMLDivElement>(null);
+
+  // Process selection copying with HTML formatting
 
   const renderedMarkdown = useMemo(() => {
+    if (typeof finalContent !== "string") {
+      return finalContent;
+    }
+
     return (
       <ReactMarkdown
-        className="prose max-w-full text-base"
+        className="prose dark:prose-invert max-w-full text-base"
         components={markdownComponents}
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypePrism, { ignoreMissing: true }], rehypeKatex]}
       >
-        {finalContent as string}
+        {finalContent}
       </ReactMarkdown>
     );
   }, [finalContent, markdownComponents]);
@@ -381,25 +395,30 @@ export const AIMessage = ({
 
   return (
     <div
-      id="onyx-ai-message"
+      id={isComplete ? "onyx-ai-message" : undefined}
       ref={trackedElementRef}
-      className={`py-5 ml-4 px-5 relative flex `}
+      className={`py-5  ml-4 lg:px-5 relative flex
+        
+        ${removePadding && "!pl-24 -mt-12"}`}
     >
       <div
         className={`mx-auto ${
           shared ? "w-full" : "w-[90%]"
         }  max-w-message-max`}
       >
-        <div className={`desktop:mr-12 ${!shared && "mobile:ml-0 md:ml-8"}`}>
-          <div className="flex">
-            <AssistantIcon
-              size="small"
-              assistant={alternativeAssistant || currentPersona}
-            />
+        <div className={`lg:mr-12 ${!shared && "mobile:ml-0 md:ml-8"}`}>
+          <div className="flex items-start">
+            {!removePadding && (
+              <AssistantIcon
+                className="mobile:hidden"
+                size={24}
+                assistant={alternativeAssistant || currentPersona}
+              />
+            )}
 
             <div className="w-full">
               <div className="max-w-message-max break-words">
-                <div className="w-full ml-4">
+                <div className="w-full desktop:ml-4">
                   <div className="max-w-message-max break-words">
                     {!toolCall || toolCall.tool_name === SEARCH_TOOL_NAME ? (
                       <>
@@ -410,6 +429,8 @@ export const AIMessage = ({
                               query={query}
                               finished={toolCall?.tool_result != undefined}
                               handleSearchQueryEdit={handleSearchQueryEdit}
+                              docs={docs || []}
+                              toggleDocumentSelection={toggleDocumentSelection!}
                             />
                           </div>
                         )}
@@ -465,16 +486,23 @@ export const AIMessage = ({
                       )}
 
                     {docs && docs.length > 0 && (
-                      <div className="mt-2 -mx-8 w-full mb-4 flex relative">
+                      <div
+                        className={`mobile:hidden ${
+                          (query ||
+                            toolCall?.tool_name ===
+                              INTERNET_SEARCH_TOOL_NAME) &&
+                          "mt-2"
+                        }  -mx-8 w-full mb-4 flex relative`}
+                      >
                         <div className="w-full">
                           <div className="px-8 flex gap-x-2">
                             {!settings?.isMobile &&
                               docs.length > 0 &&
                               docs
                                 .slice(0, 2)
-                                .map((doc, ind) => (
+                                .map((doc: OnyxDocument, ind: number) => (
                                   <SourceCard
-                                    doc={doc}
+                                    document={doc}
                                     key={ind}
                                     setPresentingDocument={
                                       setPresentingDocument
@@ -482,13 +510,10 @@ export const AIMessage = ({
                                   />
                                 ))}
                             <SeeMoreBlock
-                              documentSelectionToggled={
-                                (documentSelectionToggled &&
-                                  selectedMessageForDocDisplay === messageId) ||
-                                false
-                              }
-                              toggleDocumentSelection={toggleDocumentSelection}
-                              uniqueSources={uniqueSources}
+                              toggled={documentSidebarVisible!}
+                              toggleDocumentSelection={toggleDocumentSelection!}
+                              docs={docs}
+                              webSourceDomains={webSourceDomains}
                             />
                           </div>
                         </div>
@@ -501,7 +526,13 @@ export const AIMessage = ({
 
                         {typeof content === "string" ? (
                           <div className="overflow-x-visible max-w-content-max">
-                            {renderedMarkdown}
+                            <div
+                              ref={markdownRef}
+                              className="focus:outline-none cursor-text select-text"
+                              onCopy={(e) => handleCopy(e, markdownRef)}
+                            >
+                              {renderedMarkdown}
+                            </div>
                           </div>
                         ) : (
                           content
@@ -512,13 +543,14 @@ export const AIMessage = ({
                     )}
                   </div>
 
-                  {handleFeedback &&
+                  {!removePadding &&
+                    handleFeedback &&
                     (isActive ? (
                       <div
                         className={`
                         flex md:flex-row gap-x-0.5 mt-1
                         transition-transform duration-300 ease-in-out
-                        transform opacity-100 translate-y-0"
+                        transform opacity-100 "
                   `}
                       >
                         <TooltipGroup>
@@ -547,7 +579,11 @@ export const AIMessage = ({
                             )}
                           </div>
                           <CustomTooltip showTick line content="Copy">
-                            <CopyButton content={content.toString()} />
+                            <CopyButton
+                              copyAllFn={() =>
+                                copyAll(finalContent as string, markdownRef)
+                              }
+                            />
                           </CustomTooltip>
                           <CustomTooltip showTick line content="Good response">
                             <HoverableIcon
@@ -561,6 +597,7 @@ export const AIMessage = ({
                               onClick={() => handleFeedback("dislike")}
                             />
                           </CustomTooltip>
+
                           {regenerate && (
                             <CustomTooltip
                               disabled={isRegenerateDropdownVisible}
@@ -599,10 +636,6 @@ export const AIMessage = ({
                             settings?.isMobile) &&
                           "!opacity-100"
                         }
-                        translate-y-2 ${
-                          (isHovering || settings?.isMobile) && "!translate-y-0"
-                        }
-                        transition-transform duration-300 ease-in-out 
                         flex md:flex-row gap-x-0.5 bg-background-125/40 -mx-1.5 p-1.5 rounded-lg
                         `}
                       >
@@ -632,7 +665,11 @@ export const AIMessage = ({
                             )}
                           </div>
                           <CustomTooltip showTick line content="Copy">
-                            <CopyButton content={content.toString()} />
+                            <CopyButton
+                              copyAllFn={() =>
+                                copyAll(finalContent as string, markdownRef)
+                              }
+                            />
                           </CustomTooltip>
 
                           <CustomTooltip showTick line content="Good response">
@@ -689,27 +726,67 @@ function MessageSwitcher({
   totalPages,
   handlePrevious,
   handleNext,
+  disableForStreaming,
 }: {
   currentPage: number;
   totalPages: number;
   handlePrevious: () => void;
   handleNext: () => void;
+  disableForStreaming?: boolean;
 }) {
   return (
     <div className="flex items-center text-sm space-x-0.5">
-      <Hoverable
-        icon={FiChevronLeft}
-        onClick={currentPage === 1 ? undefined : handlePrevious}
-      />
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div>
+              <Hoverable
+                icon={FiChevronLeft}
+                onClick={
+                  disableForStreaming
+                    ? () => null
+                    : currentPage === 1
+                      ? undefined
+                      : handlePrevious
+                }
+              />
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>
+            {disableForStreaming
+              ? "Wait for agent message to complete"
+              : "Previous"}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
 
-      <span className="text-emphasis select-none">
+      <span className="text-text-darker select-none">
         {currentPage} / {totalPages}
       </span>
 
-      <Hoverable
-        icon={FiChevronRight}
-        onClick={currentPage === totalPages ? undefined : handleNext}
-      />
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger>
+            <div>
+              <Hoverable
+                icon={FiChevronRight}
+                onClick={
+                  disableForStreaming
+                    ? () => null
+                    : currentPage === totalPages
+                      ? undefined
+                      : handleNext
+                }
+              />
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>
+            {disableForStreaming
+              ? "Wait for agent message to complete"
+              : "Next"}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     </div>
   );
 }
@@ -723,6 +800,7 @@ export const HumanMessage = ({
   onMessageSelection,
   shared,
   stopGenerating = () => null,
+  disableSwitchingForStreaming = false,
 }: {
   shared?: boolean;
   content: string;
@@ -732,6 +810,7 @@ export const HumanMessage = ({
   onEdit?: (editedContent: string) => void;
   onMessageSelection?: (messageId: number) => void;
   stopGenerating?: () => void;
+  disableSwitchingForStreaming?: boolean;
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -768,7 +847,7 @@ export const HumanMessage = ({
   return (
     <div
       id="onyx-human-message"
-      className="pt-5 pb-1 px-2 lg:px-5 flex -mr-6 relative"
+      className="pt-5 pb-1 w-full lg:px-5 flex -mr-6 relative"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -778,7 +857,7 @@ export const HumanMessage = ({
         } max-w-[790px]`}
       >
         <div className="xl:ml-8">
-          <div className="flex flex-col mr-4">
+          <div className="flex flex-col desktop:mr-4">
             <FileDisplay alignBubble files={files || []} />
 
             <div className="flex justify-end">
@@ -794,7 +873,6 @@ export const HumanMessage = ({
                       border 
                       border-border 
                       rounded-lg 
-                      bg-background-emphasis
                       pb-2
                       [&:has(textarea:focus)]::ring-1
                       [&:has(textarea:focus)]::ring-black
@@ -810,16 +888,16 @@ export const HumanMessage = ({
                         border-0
                         rounded-lg 
                         overflow-y-hidden
-                        bg-background-emphasis 
                         whitespace-normal 
                         break-word
                         overscroll-contain
                         outline-none 
-                        placeholder-gray-400 
+                        placeholder-text-400 
                         resize-none
                         text-text-editing-message
                         pl-4
                         overflow-y-auto
+                        bg-background
                         pr-12 
                         py-4`}
                         aria-multiline
@@ -847,7 +925,7 @@ export const HumanMessage = ({
                         <button
                           className={`
                           w-fit
-                          bg-accent 
+                          bg-agent 
                           text-inverted 
                           text-sm
                           rounded-lg 
@@ -859,7 +937,7 @@ export const HumanMessage = ({
                           min-h-[38px]
                           py-2
                           px-3
-                          hover:bg-accent-hover
+                          hover:bg-agent-hovered
                         `}
                           onClick={handleEditSubmit}
                         >
@@ -876,10 +954,10 @@ export const HumanMessage = ({
                           py-2 
                           px-3 
                           w-fit 
-                          bg-background-strong 
+                          bg-background-200 
                           text-sm
                           rounded-lg
-                          hover:bg-hover-emphasis
+                          hover:bg-accent-background-hovered-emphasis
                         `}
                           onClick={() => {
                             setEditedContent(content);
@@ -893,7 +971,7 @@ export const HumanMessage = ({
                   </div>
                 ) : typeof content === "string" ? (
                   <>
-                    <div className="ml-auto mr-1 my-auto">
+                    <div className="ml-auto flex items-center mr-1 h-fit my-auto">
                       {onEdit &&
                       isHovered &&
                       !isEditing &&
@@ -902,7 +980,7 @@ export const HumanMessage = ({
                           <Tooltip>
                             <TooltipTrigger>
                               <HoverableIcon
-                                icon={<FiEdit2 className="text-gray-600" />}
+                                icon={<FiEdit2 className="text-text-600" />}
                                 onClick={() => {
                                   setIsEditing(true);
                                   setIsHovered(false);
@@ -925,7 +1003,7 @@ export const HumanMessage = ({
                           !isEditing &&
                           (!files || files.length === 0)
                         ) && "ml-auto"
-                      } relative flex-none max-w-[70%] mb-auto whitespace-break-spaces rounded-3xl bg-user px-5 py-2.5`}
+                      } relative text-text flex-none max-w-[70%] mb-auto whitespace-break-spaces rounded-3xl bg-user px-5 py-2.5`}
                     >
                       {content}
                     </div>
@@ -962,6 +1040,7 @@ export const HumanMessage = ({
               otherMessagesCanSwitchTo.length > 1 && (
                 <div className="ml-auto mr-3">
                   <MessageSwitcher
+                    disableForStreaming={disableSwitchingForStreaming}
                     currentPage={currentMessageInd + 1}
                     totalPages={otherMessagesCanSwitchTo.length}
                     handlePrevious={() => {

@@ -55,7 +55,7 @@ export function WhitelabelingForm() {
     <div>
       <Formik
         initialValues={{
-          auto_scroll: enterpriseSettings?.auto_scroll || false,
+          auto_scroll: settings?.settings?.auto_scroll || false,
           application_name: enterpriseSettings?.application_name || null,
           use_custom_logo: enterpriseSettings?.use_custom_logo || false,
           use_custom_logotype: enterpriseSettings?.use_custom_logotype || false,
@@ -74,9 +74,9 @@ export function WhitelabelingForm() {
         validationSchema={Yup.object().shape({
           auto_scroll: Yup.boolean().nullable(),
           application_name: Yup.string()
-            .required("Application name is required")
             .trim()
-            .min(1, "Application name cannot be empty"),
+            .min(1, "Application name cannot be empty")
+            .nullable(),
           use_custom_logo: Yup.boolean().required(),
           use_custom_logotype: Yup.boolean().required(),
           custom_header_content: Yup.string().nullable(),
@@ -140,7 +140,7 @@ export function WhitelabelingForm() {
             <TextFormField
               label="Application Name"
               name="application_name"
-              subtext={`The custom name you are giving Onyx for your organization. This will replace 'Onyx' everywhere in the UI.`}
+              subtext={`The custom name you are giving Onyx for your team. This will replace 'Onyx' everywhere in the UI.`}
               placeholder="Custom name which will replace 'Onyx'"
               disabled={isSubmitting}
             />
@@ -207,7 +207,7 @@ export function WhitelabelingForm() {
                   >
                     the docs
                   </Link>{" "}
-                  to see whitelabelling examples in action.
+                  to see whitelabeling examples in action.
                 </Text>
 
                 <TextFormField

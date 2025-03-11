@@ -1,6 +1,7 @@
 import contextlib
 import time
 from collections.abc import Generator
+from collections.abc import Iterable
 from collections.abc import Sequence
 from datetime import datetime
 from datetime import timezone
@@ -13,6 +14,7 @@ from sqlalchemy import or_
 from sqlalchemy import Select
 from sqlalchemy import select
 from sqlalchemy import tuple_
+from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine.util import TransactionalContext
 from sqlalchemy.exc import OperationalError
@@ -22,6 +24,7 @@ from sqlalchemy.sql.expression import null
 from onyx.configs.constants import DEFAULT_BOOST
 from onyx.configs.constants import DocumentSource
 from onyx.db.connector_credential_pair import get_connector_credential_pair_from_id
+from onyx.db.engine import get_session_context_manager
 from onyx.db.enums import AccessType
 from onyx.db.enums import ConnectorCredentialPairStatus
 from onyx.db.feedback import delete_document_feedback_for_documents__no_commit
@@ -58,9 +61,8 @@ def count_documents_by_needs_sync(session: Session) -> int:
     This function executes the query and returns the count of
     documents matching the criteria."""
 
-    count = (
-        session.query(func.count(DbDocument.id.distinct()))
-        .select_from(DbDocument)
+    return (
+        session.query(DbDocument.id)
         .join(
             DocumentByConnectorCredentialPair,
             DbDocument.id == DocumentByConnectorCredentialPair.id,
@@ -71,43 +73,60 @@ def count_documents_by_needs_sync(session: Session) -> int:
                 DbDocument.last_synced.is_(None),
             )
         )
-        .scalar()
+        .count()
     )
-
-    return count
 
 
 def construct_document_select_for_connector_credential_pair_by_needs_sync(
     connector_id: int, credential_id: int
 ) -> Select:
-    initial_doc_ids_stmt = select(DocumentByConnectorCredentialPair.id).where(
-        and_(
-            DocumentByConnectorCredentialPair.connector_id == connector_id,
-            DocumentByConnectorCredentialPair.credential_id == credential_id,
-        )
-    )
-
-    stmt = (
+    return (
         select(DbDocument)
-        .where(
-            DbDocument.id.in_(initial_doc_ids_stmt),
-            or_(
-                DbDocument.last_modified
-                > DbDocument.last_synced,  # last_modified is newer than last_synced
-                DbDocument.last_synced.is_(None),  # never synced
-            ),
+        .join(
+            DocumentByConnectorCredentialPair,
+            DbDocument.id == DocumentByConnectorCredentialPair.id,
         )
-        .distinct()
+        .where(
+            and_(
+                DocumentByConnectorCredentialPair.connector_id == connector_id,
+                DocumentByConnectorCredentialPair.credential_id == credential_id,
+                or_(
+                    DbDocument.last_modified > DbDocument.last_synced,
+                    DbDocument.last_synced.is_(None),
+                ),
+            )
+        )
     )
 
-    return stmt
+
+def construct_document_id_select_for_connector_credential_pair_by_needs_sync(
+    connector_id: int, credential_id: int
+) -> Select:
+    return (
+        select(DbDocument.id)
+        .join(
+            DocumentByConnectorCredentialPair,
+            DbDocument.id == DocumentByConnectorCredentialPair.id,
+        )
+        .where(
+            and_(
+                DocumentByConnectorCredentialPair.connector_id == connector_id,
+                DocumentByConnectorCredentialPair.credential_id == credential_id,
+                or_(
+                    DbDocument.last_modified > DbDocument.last_synced,
+                    DbDocument.last_synced.is_(None),
+                ),
+            )
+        )
+    )
 
 
 def get_all_documents_needing_vespa_sync_for_cc_pair(
     db_session: Session, cc_pair_id: int
 ) -> list[DbDocument]:
     cc_pair = get_connector_credential_pair_from_id(
-        cc_pair_id=cc_pair_id, db_session=db_session
+        db_session=db_session,
+        cc_pair_id=cc_pair_id,
     )
     if not cc_pair:
         raise ValueError(f"No CC pair found with ID: {cc_pair_id}")
@@ -137,7 +156,8 @@ def get_documents_for_cc_pair(
     cc_pair_id: int,
 ) -> list[DbDocument]:
     cc_pair = get_connector_credential_pair_from_id(
-        cc_pair_id=cc_pair_id, db_session=db_session
+        db_session=db_session,
+        cc_pair_id=cc_pair_id,
     )
     if not cc_pair:
         raise ValueError(f"No CC pair found with ID: {cc_pair_id}")
@@ -210,12 +230,12 @@ def get_document_connector_counts(
 
 
 def get_document_counts_for_cc_pairs(
-    db_session: Session, cc_pair_identifiers: list[ConnectorCredentialPairIdentifier]
+    db_session: Session, cc_pairs: list[ConnectorCredentialPairIdentifier]
 ) -> Sequence[tuple[int, int, int]]:
     """Returns a sequence of tuples of (connector_id, credential_id, document count)"""
 
     # Prepare a list of (connector_id, credential_id) tuples
-    cc_ids = [(x.connector_id, x.credential_id) for x in cc_pair_identifiers]
+    cc_ids = [(x.connector_id, x.credential_id) for x in cc_pairs]
 
     stmt = (
         select(
@@ -224,10 +244,13 @@ def get_document_counts_for_cc_pairs(
             func.count(),
         )
         .where(
-            tuple_(
-                DocumentByConnectorCredentialPair.connector_id,
-                DocumentByConnectorCredentialPair.credential_id,
-            ).in_(cc_ids)
+            and_(
+                tuple_(
+                    DocumentByConnectorCredentialPair.connector_id,
+                    DocumentByConnectorCredentialPair.credential_id,
+                ).in_(cc_ids),
+                DocumentByConnectorCredentialPair.has_been_indexed.is_(True),
+            )
         )
         .group_by(
             DocumentByConnectorCredentialPair.connector_id,
@@ -236,6 +259,16 @@ def get_document_counts_for_cc_pairs(
     )
 
     return db_session.execute(stmt).all()  # type: ignore
+
+
+# For use with our thread-level parallelism utils. Note that any relationships
+# you wish to use MUST be eagerly loaded, as the session will not be available
+# after this function to allow lazy loading.
+def get_document_counts_for_cc_pairs_parallel(
+    cc_pairs: list[ConnectorCredentialPairIdentifier],
+) -> Sequence[tuple[int, int, int]]:
+    with get_session_context_manager() as db_session:
+        return get_document_counts_for_cc_pairs(db_session, cc_pairs)
 
 
 def get_access_info_for_document(
@@ -380,16 +413,38 @@ def upsert_document_by_connector_credential_pair(
                     id=doc_id,
                     connector_id=connector_id,
                     credential_id=credential_id,
+                    has_been_indexed=False,
                 )
             )
             for doc_id in document_ids
         ]
     )
-    # for now, there are no columns to update. If more metadata is added, then this
-    # needs to change to an `on_conflict_do_update`
+    # this must be `on_conflict_do_nothing` rather than `on_conflict_do_update`
+    # since we don't want to update the `has_been_indexed` field for documents
+    # that already exist
     on_conflict_stmt = insert_stmt.on_conflict_do_nothing()
     db_session.execute(on_conflict_stmt)
     db_session.commit()
+
+
+def mark_document_as_indexed_for_cc_pair__no_commit(
+    db_session: Session,
+    connector_id: int,
+    credential_id: int,
+    document_ids: Iterable[str],
+) -> None:
+    """Should be called only after a successful index operation for a batch."""
+    db_session.execute(
+        update(DocumentByConnectorCredentialPair)
+        .where(
+            and_(
+                DocumentByConnectorCredentialPair.connector_id == connector_id,
+                DocumentByConnectorCredentialPair.credential_id == credential_id,
+                DocumentByConnectorCredentialPair.id.in_(document_ids),
+            )
+        )
+        .values(has_been_indexed=True)
+    )
 
 
 def update_docs_updated_at__no_commit(

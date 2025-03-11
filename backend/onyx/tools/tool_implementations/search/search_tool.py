@@ -1,13 +1,14 @@
 import json
+from collections.abc import Callable
 from collections.abc import Generator
 from typing import Any
 from typing import cast
+from typing import TypeVar
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from onyx.chat.chat_utils import llm_doc_from_inference_section
-from onyx.chat.llm_response_handler import LLMCall
 from onyx.chat.models import AnswerStyleConfig
 from onyx.chat.models import ContextualPruningConfig
 from onyx.chat.models import DocumentPruningConfig
@@ -16,7 +17,7 @@ from onyx.chat.models import OnyxContext
 from onyx.chat.models import OnyxContexts
 from onyx.chat.models import PromptConfig
 from onyx.chat.models import SectionRelevancePiece
-from onyx.chat.prompt_builder.build import AnswerPromptBuilder
+from onyx.chat.prompt_builder.answer_prompt_builder import AnswerPromptBuilder
 from onyx.chat.prompt_builder.citations_prompt import compute_max_llm_input_tokens
 from onyx.chat.prune_and_merge import prune_and_merge_sections
 from onyx.chat.prune_and_merge import prune_sections
@@ -25,7 +26,6 @@ from onyx.configs.chat_configs import CONTEXT_CHUNKS_BELOW
 from onyx.configs.model_configs import GEN_AI_MODEL_FALLBACK_MAX_TOKENS
 from onyx.context.search.enums import LLMEvaluationType
 from onyx.context.search.enums import QueryFlow
-from onyx.context.search.enums import SearchType
 from onyx.context.search.models import BaseFilters
 from onyx.context.search.models import IndexFilters
 from onyx.context.search.models import InferenceSection
@@ -34,6 +34,7 @@ from onyx.context.search.models import RetrievalDetails
 from onyx.context.search.models import SearchRequest
 from onyx.context.search.models import Tag
 from onyx.context.search.pipeline import SearchPipeline
+from onyx.context.search.pipeline import section_relevance_list_impl
 from onyx.db.models import Persona
 from onyx.db.models import User
 from onyx.llm.factory import get_default_llms
@@ -42,17 +43,19 @@ from onyx.llm.models import PreviousMessage
 from onyx.secondary_llm_flows.choose_search import check_if_need_search
 from onyx.secondary_llm_flows.query_expansion import history_based_query_rephrase
 from onyx.tools.message import ToolCallSummary
+from onyx.tools.models import SearchQueryInfo
+from onyx.tools.models import SearchToolOverrideKwargs
 from onyx.tools.models import ToolResponse
 from onyx.tools.tool import Tool
+from onyx.tools.tool_implementations.search.search_utils import (
+    context_from_inference_section,
+)
 from onyx.tools.tool_implementations.search.search_utils import llm_doc_to_dict
 from onyx.tools.tool_implementations.search_like_tool_utils import (
     build_next_prompt_for_search_like_tool,
 )
 from onyx.tools.tool_implementations.search_like_tool_utils import (
     FINAL_CONTEXT_DOCUMENTS_ID,
-)
-from onyx.tools.tool_implementations.search_like_tool_utils import (
-    ORIGINAL_CONTEXT_DOCUMENTS_ID,
 )
 from onyx.utils.logger import setup_logger
 from onyx.utils.special_types import JSON_ro
@@ -63,27 +66,7 @@ SEARCH_RESPONSE_SUMMARY_ID = "search_response_summary"
 SEARCH_DOC_CONTENT_ID = "search_doc_content"
 SECTION_RELEVANCE_LIST_ID = "section_relevance_list"
 SEARCH_EVALUATION_ID = "llm_doc_eval"
-
-
-class SearchResponseSummary(BaseModel):
-    top_sections: list[InferenceSection]
-    rephrased_query: str | None = None
-    predicted_flow: QueryFlow | None
-    predicted_search: SearchType | None
-    final_filters: IndexFilters
-    recency_bias_multiplier: float
-
-
-SEARCH_TOOL_DESCRIPTION = """
-Runs a semantic search over the user's knowledge base. The default behavior is to use this tool. \
-The only scenario where you should not use this tool is if:
-
-- There is sufficient information in chat history to FULLY and ACCURATELY answer the query AND \
-additional information or details would provide little or no value.
-- The query is some form of request that does not require additional information to handle.
-
-HINT: if you are unfamiliar with the user input OR think the user input is a typo, use this tool.
-"""
+QUERY_FIELD = "query"
 
 HARDCODED_PRE_CHOICE_PROMPT = """
 You will be given user query and list of all possible tags that sysyem can use to give user docs relevant for the query.
@@ -107,9 +90,6 @@ class SingleTagConfig(BaseModel):
 
 class DtagsConfig(BaseModel):
     dtags: list[SingleTagConfig]
-
-
-logger = setup_logger(__name__)
 
 
 def generate_context_dependent_filters(
@@ -197,7 +177,25 @@ def generate_context_dependent_filters(
     return filters, tag_report
 
 
-class SearchTool(Tool):
+class SearchResponseSummary(SearchQueryInfo):
+    top_sections: list[InferenceSection]
+    rephrased_query: str | None = None
+    predicted_flow: QueryFlow | None
+
+
+SEARCH_TOOL_DESCRIPTION = """
+Runs a semantic search over the user's knowledge base. The default behavior is to use this tool. \
+The only scenario where you should not use this tool is if:
+
+- There is sufficient information in chat history to FULLY and ACCURATELY answer the query AND \
+additional information or details would provide little or no value.
+- The query is some form of request that does not require additional information to handle.
+
+HINT: if you are unfamiliar with the user input OR think the user input is a typo, use this tool.
+"""
+
+
+class SearchTool(Tool[SearchToolOverrideKwargs]):
     _NAME = "run_search"
     _DISPLAY_NAME = "Search Tool"
     _DESCRIPTION = SEARCH_TOOL_DESCRIPTION
@@ -298,12 +296,12 @@ class SearchTool(Tool):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {
+                        QUERY_FIELD: {
                             "type": "string",
                             "description": "What to search for",
                         },
                     },
-                    "required": ["query"],
+                    "required": [QUERY_FIELD],
                 },
             },
         }
@@ -342,7 +340,7 @@ class SearchTool(Tool):
         rephrased_query = history_based_query_rephrase(
             query=query, history=history, llm=llm
         )
-        return {"query": rephrased_query}
+        return {QUERY_FIELD: rephrased_query}
 
     """Actual tool execution"""
 
@@ -395,9 +393,26 @@ class SearchTool(Tool):
 
         yield ToolResponse(id=FINAL_CONTEXT_DOCUMENTS_ID, response=llm_docs)
 
-    def run(self, **kwargs: str) -> Generator[ToolResponse, None, None]:
-        query = cast(str, kwargs["query"])
-
+    def run(
+        self, override_kwargs: SearchToolOverrideKwargs | None = None, **llm_kwargs: Any
+    ) -> Generator[ToolResponse, None, None]:
+        query = cast(str, llm_kwargs[QUERY_FIELD])
+        precomputed_query_embedding = None
+        precomputed_is_keyword = None
+        precomputed_keywords = None
+        force_no_rerank = False
+        alternate_db_session = None
+        skip_query_analysis = False
+        if override_kwargs:
+            force_no_rerank = use_alt_not_None(override_kwargs.force_no_rerank, False)
+            alternate_db_session = override_kwargs.alternate_db_session
+            override_kwargs.retrieved_sections_callback
+            skip_query_analysis = use_alt_not_None(
+                override_kwargs.skip_query_analysis, False
+            )
+            precomputed_query_embedding = override_kwargs.precomputed_query_embedding
+            precomputed_is_keyword = override_kwargs.precomputed_is_keyword
+            precomputed_keywords = override_kwargs.precomputed_keywords
         if self.selected_sections:
             yield from self._build_response_for_specified_sections(query)
             return
@@ -416,7 +431,9 @@ class SearchTool(Tool):
         search_pipeline = SearchPipeline(
             search_request=SearchRequest(
                 query=query,
-                evaluation_type=self.evaluation_type,
+                evaluation_type=LLMEvaluationType.SKIP
+                if force_no_rerank
+                else self.evaluation_type,
                 human_selected_filters=(
                     self.retrieval_options.filters if self.retrieval_options else None
                 ),
@@ -425,7 +442,16 @@ class SearchTool(Tool):
                     self.retrieval_options.offset if self.retrieval_options else None
                 ),
                 limit=self.retrieval_options.limit if self.retrieval_options else None,
-                rerank_settings=self.rerank_settings,
+                rerank_settings=RerankingDetails(
+                    rerank_model_name=None,
+                    rerank_api_url=None,
+                    rerank_provider_type=None,
+                    rerank_api_key=None,
+                    num_rerank=0,
+                    disable_rerank_for_streaming=True,
+                )
+                if force_no_rerank
+                else self.rerank_settings,
                 chunks_above=self.chunks_above,
                 chunks_below=self.chunks_below,
                 full_doc=self.full_doc,
@@ -434,19 +460,23 @@ class SearchTool(Tool):
                     if self.retrieval_options
                     else None
                 ),
+                precomputed_query_embedding=precomputed_query_embedding,
+                precomputed_is_keyword=precomputed_is_keyword,
+                precomputed_keywords=precomputed_keywords,
             ),
             user=self.user,
             llm=self.llm,
             fast_llm=self.fast_llm,
+            skip_query_analysis=skip_query_analysis,
             bypass_acl=self.bypass_acl,
-            db_session=self.db_session,
+            db_session=alternate_db_session or self.db_session,
             prompt_config=self.prompt_config,
         )
 
         yield ToolResponse(
             id=SEARCH_RESPONSE_SUMMARY_ID,
             response=SearchResponseSummary(
-                rephrased_query=query + tag_report,
+                rephrased_query=query,
                 top_sections=search_pipeline.final_context_sections,
                 predicted_flow=search_pipeline.predicted_flow,
                 predicted_search=search_pipeline.predicted_search_type,
@@ -516,37 +546,72 @@ class SearchTool(Tool):
             prompt_config=self.prompt_config,
         )
 
-    """Other utility functions"""
 
-    @classmethod
-    def get_search_result(
-        cls, llm_call: LLMCall
-    ) -> tuple[list[LlmDoc], list[LlmDoc]] | None:
-        """
-        Returns the final search results and a map of docs to their original search rank (which is what is displayed to user)
-        """
-        if not llm_call.tool_call_info:
-            return None
+# Allows yielding the same responses as a SearchTool without being a SearchTool.
+# SearchTool passed in to allow for access to SearchTool properties.
+# We can't just call SearchTool methods in the graph because we're operating on
+# the retrieved docs (reranking, deduping, etc.) after the SearchTool has run.
+#
+# The various inference sections are passed in as functions to allow for lazy
+# evaluation. The SearchPipeline object properties that they correspond to are
+# actually functions defined with @property decorators, and passing them into
+# this function causes them to get evaluated immediately which is undesirable.
+def yield_search_responses(
+    query: str,
+    get_retrieved_sections: Callable[[], list[InferenceSection]],
+    get_reranked_sections: Callable[[], list[InferenceSection]],
+    get_final_context_sections: Callable[[], list[InferenceSection]],
+    search_query_info: SearchQueryInfo,
+    get_section_relevance: Callable[[], list[SectionRelevancePiece] | None],
+    search_tool: SearchTool,
+) -> Generator[ToolResponse, None, None]:
+    yield ToolResponse(
+        id=SEARCH_RESPONSE_SUMMARY_ID,
+        response=SearchResponseSummary(
+            rephrased_query=query,
+            top_sections=get_retrieved_sections(),
+            predicted_flow=QueryFlow.QUESTION_ANSWER,
+            predicted_search=search_query_info.predicted_search,
+            final_filters=search_query_info.final_filters,
+            recency_bias_multiplier=search_query_info.recency_bias_multiplier,
+        ),
+    )
 
-        final_search_results = []
-        initial_search_results = []
+    yield ToolResponse(
+        id=SEARCH_DOC_CONTENT_ID,
+        response=OnyxContexts(
+            contexts=[
+                context_from_inference_section(section)
+                for section in get_reranked_sections()
+            ]
+        ),
+    )
 
-        for yield_item in llm_call.tool_call_info:
-            if (
-                isinstance(yield_item, ToolResponse)
-                and yield_item.id == FINAL_CONTEXT_DOCUMENTS_ID
-            ):
-                final_search_results = cast(list[LlmDoc], yield_item.response)
-            elif (
-                isinstance(yield_item, ToolResponse)
-                and yield_item.id == ORIGINAL_CONTEXT_DOCUMENTS_ID
-            ):
-                search_contexts = yield_item.response.contexts
-                # original_doc_search_rank = 1
-                for doc in search_contexts:
-                    if doc.document_id not in initial_search_results:
-                        initial_search_results.append(doc)
+    section_relevance = get_section_relevance()
+    yield ToolResponse(
+        id=SECTION_RELEVANCE_LIST_ID,
+        response=section_relevance,
+    )
 
-                initial_search_results = cast(list[LlmDoc], initial_search_results)
+    final_context_sections = get_final_context_sections()
+    pruned_sections = prune_sections(
+        sections=final_context_sections,
+        section_relevance_list=section_relevance_list_impl(
+            section_relevance, final_context_sections
+        ),
+        prompt_config=search_tool.prompt_config,
+        llm_config=search_tool.llm.config,
+        question=query,
+        contextual_pruning_config=search_tool.contextual_pruning_config,
+    )
 
-        return final_search_results, initial_search_results
+    llm_docs = [llm_doc_from_inference_section(section) for section in pruned_sections]
+
+    yield ToolResponse(id=FINAL_CONTEXT_DOCUMENTS_ID, response=llm_docs)
+
+
+T = TypeVar("T")
+
+
+def use_alt_not_None(value: T | None, alt: T) -> T:
+    return value if value is not None else alt
